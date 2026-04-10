@@ -70,71 +70,31 @@ jobs:
     - name: Build installer
       run: iscc setup.iss
 
-    - name: Write Gitee upload script
-      run: |
-        $py = @"
-        import os, json, urllib.request, subprocess, sys
-
-        token = os.environ['GITEE_TOKEN']
-        base = "https://gitee.com/api/v5/repos/thatgameapple/zhuzigao"
-
-        # delete old release
-        try:
-            req = urllib.request.Request(
-                base + "/releases/tags/v1.1",
-                data=json.dumps({"access_token": token}).encode(),
-                headers={"Content-Type": "application/json"},
-                method="DELETE"
-            )
-            urllib.request.urlopen(req)
-            print("Old release deleted")
-        except Exception as e:
-            print("Delete (ignore):", e)
-
-        # create new release
-        payload = {
-            "access_token": token,
-            "tag_name": "v1.1",
-            "name": "\u9010\u5b57\u7a3f Windows v1.1",
-            "body": "Windows\u5b89\u88c5\u5305",
-            "target_commitish": "master"
-        }
-        req = urllib.request.Request(
-            base + "/releases",
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        try:
-            resp = urllib.request.urlopen(req)
-            release = json.loads(resp.read())
-        except urllib.request.HTTPError as e:
-            print("Create release error:", e.read().decode())
-            sys.exit(1)
-        release_id = release['id']
-        print("Release ID:", release_id)
-
-        # upload file
-        r = subprocess.run([
-            "curl", "-s", "-X", "POST",
-            base + "/releases/" + str(release_id) + "/attach_files",
-            "-F", "access_token=" + token,
-            "-F", "file=@installer/zhuzigao_installer.exe"
-        ], capture_output=True, text=True)
-        print("stdout:", r.stdout)
-        print("stderr:", r.stderr)
-        if r.returncode != 0:
-            sys.exit(1)
-        "@
-        $py | Out-File -FilePath "gitee_upload.py" -Encoding UTF8
-
     - name: Upload to Gitee Release
       shell: bash
       env:
         GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
       run: |
-        python3 gitee_upload.py 2>&1 | tee output.txt
-        echo "## Gitee Upload Log" >> "$GITHUB_STEP_SUMMARY"
-        echo '```' >> "$GITHUB_STEP_SUMMARY"
-        cat output.txt >> "$GITHUB_STEP_SUMMARY"
-        echo '```' >> "$GITHUB_STEP_SUMMARY"
+        set -x
+
+        # 删除旧 release
+        curl -s -X DELETE \
+          "https://gitee.com/api/v5/repos/thatgameapple/zhuzigao/releases/tags/v1.1" \
+          -H "Content-Type: application/json" \
+          -d "{\"access_token\":\"${GITEE_TOKEN}\"}" || true
+
+        # 创建新 release（用 unicode 转义避免中文编码问题）
+        RESPONSE=$(curl -s -X POST \
+          "https://gitee.com/api/v5/repos/thatgameapple/zhuzigao/releases" \
+          -H "Content-Type: application/json" \
+          -d "{\"access_token\":\"${GITEE_TOKEN}\",\"tag_name\":\"v1.1\",\"name\":\"\u9010\u5b57\u7a3f Windows v1.1\",\"body\":\"Windows\u5b89\u88c5\u5305\",\"target_commitish\":\"master\"}")
+        echo "Response: $RESPONSE"
+
+        RELEASE_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+        echo "Release ID: $RELEASE_ID"
+
+        # 上传文件
+        curl -X POST \
+          "https://gitee.com/api/v5/repos/thatgameapple/zhuzigao/releases/${RELEASE_ID}/attach_files" \
+          -F "access_token=${GITEE_TOKEN}" \
+          -F "file=@installer/zhuzigao_installer.exe"
