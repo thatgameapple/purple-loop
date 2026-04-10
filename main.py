@@ -187,6 +187,7 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         self.bind('<FocusIn>',   self._on_focus_in)
         self.bind('<FocusOut>',  self._on_focus_out)
         self.bind('<Configure>', self._on_window_resize)
+        self.bind_all('<Escape>', self._on_escape_key, add='+')
         # 拖放文件
         if _HAS_DND:
             self.drop_target_register(DND_FILES)
@@ -278,6 +279,7 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
                            value='custom', command=lambda: self._switch_icon('custom'))
         vm.add_separator()
         vm.add_command(label="显示/隐藏侧栏", accelerator=f"{MOD_KEY}+\\", command=self._toggle_sidebar)
+        vm.add_command(label="禅定模式", accelerator=f"{MOD_KEY}+Shift+D", command=self._toggle_focus_mode)
         vm.add_command(label="搜索", accelerator=f"{MOD_KEY}+F", command=self._toggle_search)
         vm.add_command(label="全局搜索…", accelerator=f"{MOD_KEY}+Shift+F", command=self._open_global_search)
         vm.add_separator()
@@ -322,6 +324,7 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         self.bind_all('<Command-f>', lambda e: self._toggle_search())
         self.bind_all('<Command-F>', lambda e: self._open_global_search())
         self.bind_all('<Command-backslash>', lambda e: self._toggle_sidebar())
+        self.bind_all('<Command-D>', lambda e: self._toggle_focus_mode())
         self.bind_all('<Command-equal>', lambda e: self._font_change(1))
         self.bind_all('<Command-minus>', lambda e: self._font_change(-1))
         self.bind_all('<Command-bracketright>', lambda e: self._spacing_change(2))
@@ -494,7 +497,7 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         topbar.pack(fill=tk.X)
         topbar.pack_propagate(False)
 
-        # 左区：侧栏折叠按钮
+        # 左区：侧栏折叠按钮 + 禅定按钮
         _sb_toggle = tk.Label(topbar, text="☰", bg=C['bg'], fg=C['fg_dim'],
                               font=(UI_FONT, 13), cursor='hand2', padx=16)
         _sb_toggle.pack(side=tk.LEFT)
@@ -523,7 +526,9 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         self._lbl_chars = self._lbl_meta
 
         # 极细分割线
-        tk.Frame(self._reader, bg=C['border'], height=1).pack(fill=tk.X)
+        self._topbar = topbar
+        self._topbar_sep = tk.Frame(self._reader, bg=C['border'], height=1)
+        self._topbar_sep.pack(fill=tk.X)
 
 
         # 搜索栏（默认隐藏）
@@ -758,6 +763,102 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         else:
             self._sidebar.pack(side=tk.LEFT, fill=tk.Y, before=self._reader)
             self._sidebar_visible = True
+
+    # ── 禅定模式 ───────────────────────────────────────────
+
+    def _on_escape_key(self, event):
+        if getattr(self, '_focus_mode', False):
+            self._exit_focus_mode()
+
+    def _toggle_focus_mode(self):
+        if getattr(self, '_focus_mode', False):
+            self._exit_focus_mode()
+        else:
+            self._enter_focus_mode()
+
+    def _enter_focus_mode(self):
+        self._focus_mode = True
+        self._focus_prev_sidebar = self._sidebar_visible
+        self._focus_prev_annot   = getattr(self, '_annot_panel_visible', False)
+        self._focus_prev_notebar = self._note_bar.winfo_ismapped()
+
+        # 隐藏侧栏
+        if self._sidebar_visible:
+            self._sidebar.pack_forget()
+            self._sidebar_visible = False
+
+        # 隐藏标注面板
+        if self._focus_prev_annot and self.annot_mgr:
+            self.annot_mgr.toggle_panel()
+
+        # 隐藏顶栏和分割线（先记录锚点，用于退出时还原位置）
+        all_children = self._reader.winfo_children()
+        others = [w for w in all_children if w not in (self._topbar, self._topbar_sep)
+                  and w.winfo_manager() == 'pack']
+        self._focus_anchor = others[0] if others else None
+        self._topbar.pack_forget()
+        self._topbar_sep.pack_forget()
+
+        # 隐藏备注栏
+        if self._focus_prev_notebar:
+            self._note_bar.pack_forget()
+
+
+
+        # 提示浮层
+        self._show_focus_hint()
+
+    def _exit_focus_mode(self):
+        if not getattr(self, '_focus_mode', False):
+            return
+        self._focus_mode = False
+
+        # 恢复顶栏
+        anchor = getattr(self, '_focus_anchor', None)
+        if anchor and anchor.winfo_exists():
+            self._topbar.pack(fill=tk.X, before=anchor)
+            self._topbar_sep.pack(fill=tk.X, before=anchor)
+        else:
+            self._topbar.pack(fill=tk.X)
+            self._topbar_sep.pack(fill=tk.X)
+
+        # 恢复侧栏
+        if self._focus_prev_sidebar:
+            self._sidebar.pack(side=tk.LEFT, fill=tk.Y, before=self._reader)
+            self._sidebar_visible = True
+
+        # 恢复标注面板
+        if self._focus_prev_annot and self.annot_mgr:
+            self.annot_mgr.toggle_panel()
+
+        # 恢复备注栏
+        if self._focus_prev_notebar:
+            self._note_bar.pack(side=tk.BOTTOM, fill=tk.X, before=self._progress_track)
+
+
+    def _show_focus_hint(self):
+        """顶部淡入淡出提示，3 秒后自动消失"""
+        if hasattr(self, '_focus_hint_lbl') and self._focus_hint_lbl:
+            try:
+                self._focus_hint_lbl.destroy()
+            except Exception:
+                pass
+
+        hint = tk.Label(self, text="禅定模式  ·  按 ESC 退出",
+                        bg=C['bg_input'], fg=C['fg_dim'],
+                        font=(UI_FONT, 12), padx=20, pady=8,
+                        relief=tk.FLAT)
+        hint.place(relx=0.5, y=24, anchor='n')
+        self._focus_hint_lbl = hint
+
+        def _fade():
+            try:
+                hint.destroy()
+            except Exception:
+                pass
+            self._focus_hint_lbl = None
+
+        self.after(3000, _fade)
 
     # ── 作者设置 ───────────────────────────────────────────
 
