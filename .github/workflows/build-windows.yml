@@ -132,4 +132,9 @@ jobs:
       shell: bash
       env:
         GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-      run: python3 gitee_upload.py
+      run: |
+        python3 gitee_upload.py 2>&1 | tee output.txt
+        echo "## Gitee Upload Log" >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
+        cat output.txt >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
