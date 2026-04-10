@@ -70,30 +70,28 @@ jobs:
     - name: Build installer
       run: iscc setup.iss
 
-    - name: Upload to Gitee Release
-      shell: bash
-      env:
-        GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+    - name: Write Gitee upload script
       run: |
-        python3 - << 'EOF'
-        import os, json, urllib.request, urllib.parse
+        $py = @"
+        import os, json, urllib.request, subprocess, sys
 
         token = os.environ['GITEE_TOKEN']
         base = "https://gitee.com/api/v5/repos/thatgameapple/zhuzigao"
 
-        # 删除旧 release
+        # delete old release
         try:
             req = urllib.request.Request(
-                f"{base}/releases/tags/v1.1",
+                base + "/releases/tags/v1.1",
                 data=json.dumps({"access_token": token}).encode(),
                 headers={"Content-Type": "application/json"},
                 method="DELETE"
             )
             urllib.request.urlopen(req)
+            print("Old release deleted")
         except Exception as e:
-            print(f"Delete release (ignore): {e}")
+            print("Delete (ignore):", e)
 
-        # 创建新 release
+        # create new release
         payload = {
             "access_token": token,
             "tag_name": "v1.1",
@@ -102,26 +100,36 @@ jobs:
             "target_commitish": "master"
         }
         req = urllib.request.Request(
-            f"{base}/releases",
+            base + "/releases",
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json"},
             method="POST"
         )
-        resp = urllib.request.urlopen(req)
-        release = json.loads(resp.read())
+        try:
+            resp = urllib.request.urlopen(req)
+            release = json.loads(resp.read())
+        except urllib.request.HTTPError as e:
+            print("Create release error:", e.read().decode())
+            sys.exit(1)
         release_id = release['id']
-        print(f"Release ID: {release_id}")
+        print("Release ID:", release_id)
 
-        # 上传文件
-        import subprocess
-        result = subprocess.run([
+        # upload file
+        r = subprocess.run([
             "curl", "-s", "-X", "POST",
-            f"{base}/releases/{release_id}/attach_files",
-            "-F", f"access_token={token}",
+            base + "/releases/" + str(release_id) + "/attach_files",
+            "-F", "access_token=" + token,
             "-F", "file=@installer/zhuzigao_installer.exe"
         ], capture_output=True, text=True)
-        print("Upload stdout:", result.stdout)
-        print("Upload stderr:", result.stderr)
-        if result.returncode != 0:
-            raise Exception(f"Upload failed: {result.returncode}")
-        EOF
+        print("stdout:", r.stdout)
+        print("stderr:", r.stderr)
+        if r.returncode != 0:
+            sys.exit(1)
+        "@
+        $py | Out-File -FilePath "gitee_upload.py" -Encoding UTF8
+
+    - name: Upload to Gitee Release
+      shell: bash
+      env:
+        GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+      run: python3 gitee_upload.py
