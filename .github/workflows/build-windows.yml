@@ -71,6 +71,7 @@ jobs:
       run: iscc setup.iss
 
     - name: Upload to Gitee Release
+      shell: bash
       env:
         GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
       run: |
