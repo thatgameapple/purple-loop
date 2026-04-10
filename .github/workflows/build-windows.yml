@@ -47,7 +47,7 @@ jobs:
         DefaultDirName={autopf}\逐字稿
         DefaultGroupName=逐字稿
         OutputDir=installer
-        OutputBaseFilename=逐字稿_Windows安装包
+        OutputBaseFilename=zhuzigao_installer
         Compression=lzma
         SolidCompression=yes
         WizardStyle=modern
@@ -70,8 +70,25 @@ jobs:
     - name: Build installer
       run: iscc setup.iss
 
-    - name: Upload installer
-      uses: actions/upload-artifact@v4
-      with:
-        name: 逐字稿_Windows安装包
-        path: installer\逐字稿_Windows安装包.exe
+    - name: Upload to Gitee Release
+      shell: bash
+      env:
+        GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+      run: |
+        # 删除旧 release（忽略错误）
+        curl -s -X DELETE "https://gitee.com/api/v5/repos/thatgameapple/zhuzigao/releases/tags/v1.1" \
+          -H "Content-Type: application/json" \
+          -d "{\"access_token\":\"$GITEE_TOKEN\"}" || true
+
+        # 创建新 release
+        RELEASE=$(curl -s -X POST "https://gitee.com/api/v5/repos/thatgameapple/zhuzigao/releases" \
+          -H "Content-Type: application/json" \
+          -d "{\"access_token\":\"$GITEE_TOKEN\",\"tag_name\":\"v1.1\",\"name\":\"逐字稿 Windows v1.1\",\"body\":\"Windows安装包\",\"target_commitish\":\"main\"}")
+        echo "Release response: $RELEASE"
+        RELEASE_ID=$(echo $RELEASE | python -c "import sys,json; print(json.load(sys.stdin)['id'])")
+        echo "Release ID: $RELEASE_ID"
+
+        # 上传文件
+        curl -s -X POST "https://gitee.com/api/v5/repos/thatgameapple/zhuzigao/releases/$RELEASE_ID/attach_files" \
+          -F "access_token=$GITEE_TOKEN" \
+          -F "file=@installer/zhuzigao_installer.exe"
