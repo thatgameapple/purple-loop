@@ -1,0 +1,77 @@
+name: Build Windows Installer
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install PyMuPDF python-docx Pillow pyinstaller tkinterdnd2
+
+    - name: Build exe with PyInstaller
+      run: |
+        python -m PyInstaller `
+          --windowed `
+          --name "逐字稿" `
+          --add-data "fonts;fonts" `
+          --hidden-import "annotation_manager" `
+          --hidden-import "annotation_store" `
+          --hidden-import "theme" `
+          --hidden-import "fitz" `
+          --hidden-import "docx" `
+          --hidden-import "PIL" `
+          --noconfirm `
+          main.py
+
+    - name: Create Inno Setup script
+      run: |
+        $iss = @"
+        [Setup]
+        AppName=逐字稿
+        AppVersion=1.1
+        DefaultDirName={autopf}\逐字稿
+        DefaultGroupName=逐字稿
+        OutputDir=installer
+        OutputBaseFilename=逐字稿_Windows安装包
+        Compression=lzma
+        SolidCompression=yes
+        WizardStyle=modern
+
+        [Files]
+        Source: "dist\逐字稿\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
+
+        [Icons]
+        Name: "{group}\逐字稿"; Filename: "{app}\逐字稿.exe"
+        Name: "{commondesktop}\逐字稿"; Filename: "{app}\逐字稿.exe"
+
+        [Run]
+        Filename: "{app}\逐字稿.exe"; Description: "立即启动逐字稿"; Flags: postinstall nowait
+        "@
+        $iss | Out-File -FilePath "setup.iss" -Encoding UTF8
+
+    - name: Install Inno Setup
+      run: choco install innosetup -y
+
+    - name: Build installer
+      run: iscc setup.iss
+
+    - name: Upload installer
+      uses: actions/upload-artifact@v4
+      with:
+        name: 逐字稿_Windows安装包
+        path: installer\逐字稿_Windows安装包.exe
