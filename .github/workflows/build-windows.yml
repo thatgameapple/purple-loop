@@ -70,31 +70,16 @@ jobs:
     - name: Build installer
       run: iscc setup.iss
 
-    - name: Upload to Gitee Release
+    - name: Push installer to Gitee
       shell: bash
       env:
         GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
       run: |
-        set -x
-
-        # 删除旧 release
-        curl -s -X DELETE \
-          "https://gitee.com/api/v5/repos/thatgameapple/zhuzigao/releases/tags/v1.1" \
-          -H "Content-Type: application/json" \
-          -d "{\"access_token\":\"${GITEE_TOKEN}\"}" || true
-
-        # 创建新 release（用 unicode 转义避免中文编码问题）
-        RESPONSE=$(curl -s -X POST \
-          "https://gitee.com/api/v5/repos/thatgameapple/zhuzigao/releases" \
-          -H "Content-Type: application/json" \
-          -d "{\"access_token\":\"${GITEE_TOKEN}\",\"tag_name\":\"v1.1\",\"name\":\"\u9010\u5b57\u7a3f Windows v1.1\",\"body\":\"Windows\u5b89\u88c5\u5305\",\"target_commitish\":\"master\"}")
-        echo "Response: $RESPONSE"
-
-        RELEASE_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
-        echo "Release ID: $RELEASE_ID"
-
-        # 上传文件
-        curl -X POST \
-          "https://gitee.com/api/v5/repos/thatgameapple/zhuzigao/releases/${RELEASE_ID}/attach_files" \
-          -F "access_token=${GITEE_TOKEN}" \
-          -F "file=@installer/zhuzigao_installer.exe"
+        git config --global user.email "action@github.com"
+        git config --global user.name "GitHub Action"
+        git clone "https://thatgameapple:${GITEE_TOKEN}@gitee.com/thatgameapple/zhuzigao.git" gitee_repo
+        cp installer/zhuzigao_installer.exe gitee_repo/
+        cd gitee_repo
+        git add zhuzigao_installer.exe
+        git commit -m "update windows installer"
+        git push
