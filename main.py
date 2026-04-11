@@ -341,13 +341,13 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         self._sidebar.pack_propagate(False)
 
         # 侧栏拖拽把手
-        self._sidebar_handle = tk.Frame(self, bg=C['border'], width=4, cursor='sb_h_double_arrow')
+        self._sidebar_handle = tk.Frame(self, bg=C['bg'], width=4, cursor='sb_h_double_arrow')
         self._sidebar_handle.pack(side=tk.LEFT, fill=tk.Y)
         self._sidebar_handle.bind('<Button-1>',      self._on_sidebar_drag_start)
         self._sidebar_handle.bind('<B1-Motion>',     self._on_sidebar_drag)
         self._sidebar_handle.bind('<ButtonRelease-1>', self._on_sidebar_drag_end)
-        self._sidebar_handle.bind('<Enter>', lambda e: self._sidebar_handle.config(bg=C['accent']))
-        self._sidebar_handle.bind('<Leave>', lambda e: self._sidebar_handle.config(bg=C['border']))
+        self._sidebar_handle.bind('<Enter>', lambda e: self._sidebar_handle.config(bg=C['accent_dim']))
+        self._sidebar_handle.bind('<Leave>', lambda e: self._sidebar_handle.config(bg=C['bg']))
 
         # ── 右侧标注面板（常驻，初始隐藏）────────────────
         self._annot_panel_frame = tk.Frame(self, bg=C['bg_sidebar'], width=240)
@@ -817,9 +817,10 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         self._focus_prev_annot   = getattr(self, '_annot_panel_visible', False)
         self._focus_prev_notebar = self._note_bar.winfo_ismapped()
 
-        # 隐藏侧栏
+        # 隐藏侧栏和把手
         if self._sidebar_visible:
             self._sidebar.pack_forget()
+            self._sidebar_handle.pack_forget()
             self._sidebar_visible = False
 
         # 隐藏标注面板
@@ -857,9 +858,10 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
             self._topbar.pack(fill=tk.X)
             self._topbar_sep.pack(fill=tk.X)
 
-        # 恢复侧栏
+        # 恢复侧栏和把手
         if self._focus_prev_sidebar:
             self._sidebar.pack(side=tk.LEFT, fill=tk.Y, before=self._reader)
+            self._sidebar_handle.pack(side=tk.LEFT, fill=tk.Y, before=self._reader)
             self._sidebar_visible = True
 
         # 恢复标注面板
