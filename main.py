@@ -949,15 +949,17 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
             self.after(150, self._launch_animation)
 
     def _make_anim_canvas(self):
-        """在阅读区文本内部叠加动画 Canvas（背景与文本区一致，无黑色覆盖）"""
+        """在阅读区上方叠加动画 Canvas（放在 _reader 容器里，背景与文本区一致）"""
         self.update_idletasks()
         txt = self.text
+        x = txt.winfo_x()
+        y = txt.winfo_y()
         w = txt.winfo_width()
         h = txt.winfo_height()
 
-        cvs = tk.Canvas(txt, width=w, height=h,
+        cvs = tk.Canvas(self._reader, width=w, height=h,
                         highlightthickness=0, bg=C['bg'], bd=0)
-        cvs.place(x=0, y=0, relwidth=1, relheight=1)
+        cvs.place(x=x, y=y)
         cvs.lift()
 
         cvs.bind('<Button-1>', lambda e: cvs.destroy())
