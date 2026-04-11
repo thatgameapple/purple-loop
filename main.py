@@ -956,7 +956,7 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         h = txt.winfo_height()
         x = txt.winfo_rootx()
         y = txt.winfo_rooty()
-        TRANSP = '#010101'
+        TRANSP = 'black'
 
         dlg = tk.Toplevel(self)
         dlg.overrideredirect(True)
