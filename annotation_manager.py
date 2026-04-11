@@ -578,8 +578,6 @@ class AnnotationManager:
                 continue
             si = self._offset_to_index(s)
             ei = self._offset_to_index(e)
-            if self.text.get(si, ei) != annot.get('text', self.text.get(si, ei)):
-                continue
             if annot['type'] in ANNOT_STYLES:
                 self.text.tag_add(annot['type'], si, ei)
         try:
