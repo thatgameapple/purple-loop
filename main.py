@@ -334,9 +334,20 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
 
     def _build_ui(self):
         # ── 侧栏 ──────────────────────────────────────────
-        self._sidebar = tk.Frame(self, bg=C['bg_sidebar'], width=230)
+        prefs = self.store.files.get('__prefs__', {})
+        _sidebar_w = prefs.get('sidebar_width', 230) if isinstance(prefs, dict) else 230
+        self._sidebar = tk.Frame(self, bg=C['bg_sidebar'], width=_sidebar_w)
         self._sidebar.pack(side=tk.LEFT, fill=tk.Y)
         self._sidebar.pack_propagate(False)
+
+        # 侧栏拖拽把手
+        self._sidebar_handle = tk.Frame(self, bg=C['border'], width=4, cursor='sb_h_double_arrow')
+        self._sidebar_handle.pack(side=tk.LEFT, fill=tk.Y)
+        self._sidebar_handle.bind('<Button-1>',      self._on_sidebar_drag_start)
+        self._sidebar_handle.bind('<B1-Motion>',     self._on_sidebar_drag)
+        self._sidebar_handle.bind('<ButtonRelease-1>', self._on_sidebar_drag_end)
+        self._sidebar_handle.bind('<Enter>', lambda e: self._sidebar_handle.config(bg=C['accent']))
+        self._sidebar_handle.bind('<Leave>', lambda e: self._sidebar_handle.config(bg=C['border']))
 
         # ── 右侧标注面板（常驻，初始隐藏）────────────────
         self._annot_panel_frame = tk.Frame(self, bg=C['bg_sidebar'], width=240)
@@ -393,38 +404,42 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         s.map('Thin.Vertical.TScrollbar',
               background=[('active', C['accent'])])
 
-        # ── 侧栏底栏：作者身份 ───────────────────────────────
+        # ── 侧栏底栏：作者 + 个性签名 ────────────────────────
         sb_bottom = tk.Frame(self._sidebar, bg=C['bg_sidebar'])
         sb_bottom.pack(side=tk.BOTTOM, fill=tk.X)
         tk.Frame(sb_bottom, bg=C['border'], height=1).pack(fill=tk.X)
 
-        author_row = tk.Frame(sb_bottom, bg=C['bg_sidebar'])
-        author_row.pack(fill=tk.X, padx=16, pady=10)
+        sig_row = tk.Frame(sb_bottom, bg=C['bg_sidebar'])
+        sig_row.pack(fill=tk.X, padx=16, pady=10)
 
-        self._author_lbl = tk.Label(author_row, text="",
-                                     bg=C['bg_sidebar'], fg=C['fg_file'],
-                                     font=(UI_FONT, 11), cursor='hand2',
+        self._author_lbl = tk.Label(sig_row, text="",
+                                     bg=C['bg_sidebar'], fg=C['fg_hint'],
+                                     font=(UI_FONT, 10), cursor='arrow',
                                      anchor='w')
         self._author_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+        self._sig_lbl = self._author_lbl  # 兼容旧引用
+
         def _refresh_author_lbl():
-            name = self._get_author()
-            if name:
-                self._author_lbl.config(text=name, fg=C['accent'])
+            sig = self._get_signature()
+            if sig:
+                # 有签名：显示签名，悬停变亮，点击可修改
+                self._author_lbl.config(text=sig, fg=C['fg_dim2'], cursor='hand2')
+                self._author_lbl.bind('<Enter>', lambda e: self._author_lbl.config(
+                    fg=C['fg_dim']))
+                self._author_lbl.bind('<Leave>', lambda e: self._author_lbl.config(
+                    fg=C['fg_dim2']))
+                self._author_lbl.bind('<Button-1>', lambda e: self._set_signature())
             else:
-                self._author_lbl.config(text="点击设置作者名", fg=C['fg_hint'])
+                # 彩蛋：平时完全空白，悬停才出现极淡提示
+                self._author_lbl.config(text='', fg=C['fg_hint'], cursor='arrow')
+                self._author_lbl.bind('<Enter>', lambda e: (
+                    self._author_lbl.config(text='✦', fg=C['fg_hint'], cursor='hand2')))
+                self._author_lbl.bind('<Leave>', lambda e: (
+                    self._author_lbl.config(text='', cursor='arrow')))
+                self._author_lbl.bind('<Button-1>', lambda e: self._set_signature())
 
         self._refresh_author_lbl = _refresh_author_lbl
-
-        def _on_author_click(e):
-            self._set_author()
-
-        self._author_lbl.bind('<Button-1>', _on_author_click)
-        self._author_lbl.bind('<Enter>',
-            lambda e: self._author_lbl.config(fg=C['accent']))
-        self._author_lbl.bind('<Leave>',
-            lambda e: self._author_lbl.config(
-                fg=C['accent'] if self._get_author() else C['fg_hint']))
 
         # 用一个容器叠放 标签/目录 两个面板，通过 tkraise 切换，避免 pack 闪烁
         _tab_container = tk.Frame(self._sidebar, bg=C['bg_sidebar'])
@@ -759,10 +774,30 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
     def _toggle_sidebar(self):
         if self._sidebar_visible:
             self._sidebar.pack_forget()
+            self._sidebar_handle.pack_forget()
             self._sidebar_visible = False
         else:
             self._sidebar.pack(side=tk.LEFT, fill=tk.Y, before=self._reader)
+            self._sidebar_handle.pack(side=tk.LEFT, fill=tk.Y, before=self._reader)
             self._sidebar_visible = True
+
+    def _on_sidebar_drag_start(self, event):
+        self._drag_start_x     = event.x_root
+        self._drag_start_width = self._sidebar.winfo_width()
+
+    def _on_sidebar_drag(self, event):
+        dx = event.x_root - self._drag_start_x
+        new_w = max(160, min(480, self._drag_start_width + dx))
+        self._sidebar.config(width=new_w)
+
+    def _on_sidebar_drag_end(self, event):
+        w = self._sidebar.winfo_width()
+        prefs = self.store.files.get('__prefs__', {})
+        if not isinstance(prefs, dict):
+            prefs = {}
+        prefs['sidebar_width'] = w
+        self.store.files['__prefs__'] = prefs
+        self.store.save()
 
     # ── 禅定模式 ───────────────────────────────────────────
 
@@ -884,9 +919,113 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         if hasattr(self, '_refresh_author_lbl'):
             self._refresh_author_lbl()
 
+    def _get_signature(self):
+        prefs = self.store.files.get('__prefs__', {})
+        return prefs.get('signature', '') if isinstance(prefs, dict) else ''
+
+    def _set_signature(self):
+        self._show_entry(
+            title='签名',
+            hint=self._get_signature(),
+            cb=self._save_signature,
+            allow_empty=True,
+        )
+
+    def _save_signature(self, text):
+        old_sig = self._get_signature()
+        prefs = self.store.files.get('__prefs__', {})
+        if not isinstance(prefs, dict):
+            prefs = {}
+        new_sig = text.strip()
+        prefs['signature'] = new_sig
+        self.store.files['__prefs__'] = prefs
+        self.store.save()
+        if hasattr(self, '_refresh_author_lbl'):
+            self._refresh_author_lbl()
+        # 彩蛋：第一次写入签名时触发烟花动画
+        if new_sig and not old_sig:
+            self._launch_fireworks()
+
+    def _launch_fireworks(self):
+        """在主窗口上覆盖一个 Canvas，播放烟花粒子动画"""
+        import math, random
+        w = self.winfo_width()
+        h = self.winfo_height()
+        cvs = tk.Canvas(self, width=w, height=h,
+                        highlightthickness=0, bg='', bd=0)
+        cvs.place(x=0, y=0, relwidth=1, relheight=1)
+        cvs.lift()
+
+        COLORS = ['#ff6b6b', '#ffd93d', '#6bcb77', '#4d96ff',
+                  '#ff922b', '#cc5de8', '#f06595', '#74c0fc']
+
+        class Particle:
+            def __init__(self, cx, cy):
+                angle = random.uniform(0, 2 * math.pi)
+                speed = random.uniform(3, 9)
+                self.x = cx
+                self.y = cy
+                self.vx = math.cos(angle) * speed
+                self.vy = math.sin(angle) * speed
+                self.life = random.randint(30, 55)
+                self.max_life = self.life
+                self.color = random.choice(COLORS)
+                r = random.randint(3, 5)
+                self.item = cvs.create_oval(
+                    cx - r, cy - r, cx + r, cy + r,
+                    fill=self.color, outline='')
+
+            def step(self):
+                self.vy += 0.25  # 重力
+                self.vx *= 0.97
+                self.x += self.vx
+                self.y += self.vy
+                self.life -= 1
+                alpha = self.life / self.max_life
+                # 用 stipple 近似透明度（16 级）
+                cvs.coords(self.item,
+                           self.x - 3, self.y - 3,
+                           self.x + 3, self.y + 3)
+                return self.life > 0
+
+        bursts = []
+        num_bursts = random.randint(4, 6)
+        for _ in range(num_bursts):
+            cx = random.uniform(w * 0.2, w * 0.8)
+            cy = random.uniform(h * 0.15, h * 0.55)
+            bursts.append({'cx': cx, 'cy': cy, 'delay': random.randint(0, 20)})
+
+        particles = []
+        frame = [0]
+
+        def tick():
+            f = frame[0]
+            frame[0] += 1
+            # 按延迟生成各次爆炸
+            for b in bursts:
+                if f == b['delay']:
+                    for _ in range(random.randint(28, 40)):
+                        particles.append(Particle(b['cx'], b['cy']))
+            # 更新粒子
+            alive = []
+            for p in particles:
+                if p.step():
+                    alive.append(p)
+                else:
+                    cvs.delete(p.item)
+            particles.clear()
+            particles.extend(alive)
+
+            if f < max(b['delay'] for b in bursts) + 70:
+                cvs.after(16, tick)
+            else:
+                cvs.destroy()
+
+        tick()
+
     # ── 弹窗输入框 ─────────────────────────────────────────
 
-    def _show_entry(self, hint='', cb=None, title=''):
+    def _show_entry(self, hint='', cb=None, title='', allow_empty=False):
         """弹出深色主题小对话框，获取用户输入后回调 cb(name)"""
         dlg = tk.Toplevel(self)
         dlg.title('')
@@ -922,7 +1061,7 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         def ok(e=None):
             val = evar.get().strip()
             dlg.destroy()
-            if val and cb:
+            if cb and (val or allow_empty):
                 cb(val)
 
         def cancel(e=None):
