@@ -441,6 +441,10 @@ class AnnotationManager:
         if not self._current_file:
             return
 
+        # 去掉末尾换行符，避免把下一行空白也染色
+        while end_idx != start_idx and self.text.get(f'{end_idx}-1c', end_idx) in ('\n', '\r'):
+            end_idx = self.text.index(f'{end_idx}-1c')
+
         start_off    = self._get_char_offset(start_idx)
         end_off      = self._get_char_offset(end_idx)
         text_content = self.text.get(start_idx, end_idx)
