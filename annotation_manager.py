@@ -587,14 +587,23 @@ class AnnotationManager:
                     self.text.tag_add(annot['type'], si, ei)
                     continue
 
-            # 偏移量对不上时，在全文中搜索原始文字
+            # 偏移量对不上时，在全文中搜索原始文字（找最靠近原始偏移量的位置）
             if expected:
                 full = self.text.get('1.0', tk.END)
-                idx = full.find(expected)
-                if idx != -1:
+                best_idx, best_dist = -1, float('inf')
+                search_pos = 0
+                while True:
+                    idx = full.find(expected, search_pos)
+                    if idx == -1:
+                        break
+                    dist = abs(idx - s)
+                    if dist < best_dist:
+                        best_dist, best_idx = dist, idx
+                    search_pos = idx + 1
+                if best_idx != -1:
                     self.text.tag_add(annot['type'],
-                                      f'1.0+{idx}c',
-                                      f'1.0+{idx + len(expected)}c')
+                                      f'1.0+{best_idx}c',
+                                      f'1.0+{best_idx + len(expected)}c')
         try:
             self.text.tag_raise('search_match')
             self.text.tag_raise('search_current')
