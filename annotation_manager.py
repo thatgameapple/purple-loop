@@ -573,13 +573,28 @@ class AnnotationManager:
         annots = self.store.get_for_file(filepath)
         total  = int(self.text.count('1.0', tk.END, 'chars')[0])
         for annot in annots:
-            s, e = annot['start'], annot['end']
-            if s >= total or e > total or s >= e:
+            if annot['type'] not in ANNOT_STYLES:
                 continue
-            si = self._offset_to_index(s)
-            ei = self._offset_to_index(e)
-            if annot['type'] in ANNOT_STYLES:
-                self.text.tag_add(annot['type'], si, ei)
+            s, e = annot['start'], annot['end']
+            expected = annot.get('text', '')
+            length = e - s
+
+            # 先尝试存储的偏移量位置
+            if 0 <= s < total and 0 < length <= total - s:
+                si = self._offset_to_index(s)
+                ei = self._offset_to_index(s + length)
+                if not expected or self.text.get(si, ei) == expected:
+                    self.text.tag_add(annot['type'], si, ei)
+                    continue
+
+            # 偏移量对不上时，在全文中搜索原始文字
+            if expected:
+                full = self.text.get('1.0', tk.END)
+                idx = full.find(expected)
+                if idx != -1:
+                    self.text.tag_add(annot['type'],
+                                      f'1.0+{idx}c',
+                                      f'1.0+{idx + len(expected)}c')
         try:
             self.text.tag_raise('search_match')
             self.text.tag_raise('search_current')
