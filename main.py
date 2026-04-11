@@ -946,14 +946,14 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
             self._refresh_author_lbl()
         # 彩蛋：每次修改签名触发随机动画
         if new_sig:
-            self._launch_animation()
+            self.after(150, self._launch_animation)
 
     def _make_anim_canvas(self):
         """创建覆盖全屏的动画 Canvas"""
         w = self.winfo_width()
         h = self.winfo_height()
         cvs = tk.Canvas(self, width=w, height=h,
-                        highlightthickness=0, bg='', bd=0)
+                        highlightthickness=0, bg=C['bg'], bd=0)
         cvs.place(x=0, y=0, relwidth=1, relheight=1)
         cvs.lift()
         return cvs, w, h
