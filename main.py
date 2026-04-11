@@ -2755,7 +2755,9 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         for para in doc.paragraphs:
             name = para.style.name
             sid  = getattr(para.style, 'style_id', '') or ''
-            m = _re.match(r'Heading\s*(\d)', name) or _re.match(r'Heading(\d)', sid)
+            m = (_re.match(r'Heading\s*(\d)', name) or
+                 _re.match(r'Heading(\d)', sid) or
+                 _re.match(r'标题\s*(\d)', name))
             if m and para.text.strip():
                 lv = min(int(m.group(1)), 7)
                 import uuid as _uuid
