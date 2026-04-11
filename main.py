@@ -949,13 +949,14 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
             self.after(150, self._launch_animation)
 
     def _make_anim_canvas(self):
-        """创建透明 Toplevel，粒子浮在界面上方"""
+        """在阅读区文本上方创建透明动画层"""
         self.update_idletasks()
-        w = self.winfo_width()
-        h = self.winfo_height()
-        x = self.winfo_rootx()
-        y = self.winfo_rooty()
-        TRANSP = '#010101'   # 近黑色作透明键（避开纯黑与粒子颜色冲突）
+        txt = self.text
+        w = txt.winfo_width()
+        h = txt.winfo_height()
+        x = txt.winfo_rootx()
+        y = txt.winfo_rooty()
+        TRANSP = '#010101'
 
         dlg = tk.Toplevel(self)
         dlg.overrideredirect(True)
@@ -965,15 +966,13 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         try:
             dlg.wm_attributes('-transparentcolor', TRANSP)
         except tk.TclError:
-            pass  # 非 macOS 忽略
+            pass
 
         cvs = tk.Canvas(dlg, width=w, height=h,
                         highlightthickness=0, bg=TRANSP, bd=0)
         cvs.pack()
 
-        # 点击跳过
         cvs.bind('<Button-1>', lambda e: dlg.destroy())
-        # 兜底：5 秒后强制销毁
         dlg.after(5000, lambda: dlg.destroy() if dlg.winfo_exists() else None)
         return cvs, w, h
 
