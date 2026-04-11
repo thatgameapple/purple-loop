@@ -81,5 +81,4 @@ jobs:
         cp installer/zhuzigao_installer.exe gitee_repo/
         cd gitee_repo
         git add zhuzigao_installer.exe
-        git commit -m "update windows installer"
-        git push
+        git diff --staged --quiet && echo "nothing to commit" || (git commit -m "update windows installer" && git push)
