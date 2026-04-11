@@ -571,39 +571,57 @@ class AnnotationManager:
         for tag_name in ANNOT_STYLES:
             self.text.tag_remove(tag_name, '1.0', tk.END)
         annots = self.store.get_for_file(filepath)
-        total  = int(self.text.count('1.0', tk.END, 'chars')[0])
-        for annot in annots:
+        total     = int(self.text.count('1.0', tk.END, 'chars')[0])
+        full_text = self.text.get('1.0', tk.END)
+
+        # 新批注优先：按创建时间倒序排，确保较新的批注先占位
+        annots_sorted = sorted(annots,
+                               key=lambda a: a.get('created_at', ''),
+                               reverse=True)
+        applied = []   # 已占用的 [(start, end), ...]
+
+        for annot in annots_sorted:
             if annot['type'] not in ANNOT_STYLES:
                 continue
-            s, e = annot['start'], annot['end']
+            s, e     = annot['start'], annot['end']
             expected = annot.get('text', '')
-            length = e - s
+            length   = e - s
+            if length <= 0:
+                continue
 
-            # 先尝试存储的偏移量位置
-            if 0 <= s < total and 0 < length <= total - s:
-                si = self._offset_to_index(s)
-                ei = self._offset_to_index(s + length)
-                if not expected or self.text.get(si, ei) == expected:
-                    self.text.tag_add(annot['type'], si, ei)
-                    continue
+            final_s = final_e = None
 
-            # 偏移量对不上时，在全文中搜索原始文字（找最靠近原始偏移量的位置）
-            if expected:
-                full = self.text.get('1.0', tk.END)
+            # 精确匹配：直接用存储偏移量
+            if 0 <= s and s + length <= total:
+                if not expected or full_text[s:s + length] == expected:
+                    final_s, final_e = s, s + length
+
+            # 模糊匹配：找最靠近原始偏移量的出现位置
+            if final_s is None and expected:
                 best_idx, best_dist = -1, float('inf')
-                search_pos = 0
+                pos = 0
                 while True:
-                    idx = full.find(expected, search_pos)
+                    idx = full_text.find(expected, pos)
                     if idx == -1:
                         break
-                    dist = abs(idx - s)
-                    if dist < best_dist:
-                        best_dist, best_idx = dist, idx
-                    search_pos = idx + 1
+                    d = abs(idx - s)
+                    if d < best_dist:
+                        best_dist, best_idx = d, idx
+                    pos = idx + 1
                 if best_idx != -1:
-                    self.text.tag_add(annot['type'],
-                                      f'1.0+{best_idx}c',
-                                      f'1.0+{best_idx + len(expected)}c')
+                    final_s, final_e = best_idx, best_idx + len(expected)
+
+            if final_s is None:
+                continue
+
+            # 与已占位范围有重叠则跳过（防止颜色混乱）
+            if any(final_s < ae and final_e > as_ for as_, ae in applied):
+                continue
+
+            applied.append((final_s, final_e))
+            self.text.tag_add(annot['type'],
+                              f'1.0+{final_s}c',
+                              f'1.0+{final_e}c')
         try:
             self.text.tag_raise('search_match')
             self.text.tag_raise('search_current')
