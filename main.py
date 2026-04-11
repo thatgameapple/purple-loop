@@ -398,10 +398,10 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         s.configure('Sidebar.Treeview.Heading', background=C['bg_sidebar'])
 
         # 侧栏滚动条（极细）
-        s.configure('Thin.Vertical.TScrollbar',
+        s.configure('Sidebar.Thin.Vertical.TScrollbar',
                     troughcolor=C['bg_sidebar'], background=C['accent_dim'],
                     width=4, relief=tk.FLAT, borderwidth=0)
-        s.map('Thin.Vertical.TScrollbar',
+        s.map('Sidebar.Thin.Vertical.TScrollbar',
               background=[('active', C['accent'])])
 
         # ── 侧栏底栏：作者 + 个性签名 ────────────────────────
@@ -451,7 +451,7 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         self._tree_frame_ref = _tree_frame
 
         _vsb_tree = ttk.Scrollbar(_tree_frame, orient=tk.VERTICAL,
-                                   style='Thin.Vertical.TScrollbar')
+                                   style='Sidebar.Thin.Vertical.TScrollbar')
         _vsb_tree.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.tree = ttk.Treeview(_tree_frame, show='tree',
@@ -486,7 +486,7 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         self._toc_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
 
         _vsb_toc = ttk.Scrollbar(self._toc_frame, orient=tk.VERTICAL,
-                                  style='Thin.Vertical.TScrollbar')
+                                  style='Sidebar.Thin.Vertical.TScrollbar')
         _vsb_toc.pack(side=tk.RIGHT, fill=tk.Y)
 
         self._toc_tree = ttk.Treeview(self._toc_frame, show='tree',
@@ -2690,6 +2690,11 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
                     troughcolor=C['bg'], background=C['accent_dim'],
                     width=4, relief=tk.FLAT, borderwidth=0)
         s.map('Thin.Vertical.TScrollbar',
+              background=[('active', C['accent'])])
+        s.configure('Sidebar.Thin.Vertical.TScrollbar',
+                    troughcolor=C['bg_sidebar'], background=C['accent_dim'],
+                    width=4, relief=tk.FLAT, borderwidth=0)
+        s.map('Sidebar.Thin.Vertical.TScrollbar',
               background=[('active', C['accent'])])
 
     # ── 目录导航 ───────────────────────────────────────────
