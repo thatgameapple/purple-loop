@@ -403,6 +403,8 @@ class AnnotationManager:
         self._note_preview_lbl.config(text=f'"{preview}"')
         self._note_entry.delete('1.0', tk.END)
         self._note_entry.insert('1.0', annot.get('note', ''))
+        # 清除主文本框选区，避免 focus 转移后出现暗色"非活跃选区"
+        self.text.tag_remove('sel', '1.0', tk.END)
         if not self._note_bar.winfo_ismapped():
             self._note_bar.pack(side=tk.BOTTOM, fill=tk.X,
                                 before=self.app._vsb_text)
