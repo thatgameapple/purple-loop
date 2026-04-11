@@ -1024,6 +1024,7 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         particles, frame = [], [0]
 
         def tick():
+            if not cvs.winfo_exists(): return
             f = frame[0]; frame[0] += 1
             for b in bursts:
                 if f == b['delay']:
@@ -1035,7 +1036,7 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
                 else: cvs.delete(p.item)
             particles.clear(); particles.extend(alive)
             if f < max(b['delay'] for b in bursts) + 70:
-                cvs.after(16, tick)
+                self.after(16, tick)
             else:
                 cvs.destroy()
         tick()
@@ -1072,6 +1073,7 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         pieces, frame = [], [0]
 
         def tick():
+            if not cvs.winfo_exists(): return
             f = frame[0]; frame[0] += 1
             if f < 40:
                 for _ in range(4): pieces.append(Confetto())
@@ -1081,7 +1083,7 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
                 else: cvs.delete(p.item)
             pieces.clear(); pieces.extend(alive)
             if pieces or f < 50:
-                cvs.after(16, tick)
+                self.after(16, tick)
             else:
                 cvs.destroy()
         tick()
@@ -1127,6 +1129,7 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         bubbles, frame = [], [0]
 
         def tick():
+            if not cvs.winfo_exists(): return
             f = frame[0]; frame[0] += 1
             if f % 5 == 0 and f < 65:
                 bubbles.append(Bubble())
@@ -1137,7 +1140,7 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
                     cvs.delete(b.ring); cvs.delete(b.shine)
             bubbles.clear(); bubbles.extend(alive)
             if bubbles or f < 75:
-                cvs.after(16, tick)
+                self.after(16, tick)
             else:
                 cvs.destroy()
         tick()
@@ -1174,6 +1177,7 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         MAX_F = 90
 
         def tick():
+            if not cvs.winfo_exists(): return
             f = frame[0]; frame[0] += 1
             if f % 3 == 0 and f < MAX_F - 20:
                 stars.append(Star())
@@ -1183,7 +1187,7 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
                 else: cvs.delete(s.item)
             stars.clear(); stars.extend(alive)
             if stars or f < MAX_F:
-                cvs.after(16, tick)
+                self.after(16, tick)
             else:
                 cvs.destroy()
         tick()
