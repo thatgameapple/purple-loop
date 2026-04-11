@@ -949,13 +949,32 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
             self.after(150, self._launch_animation)
 
     def _make_anim_canvas(self):
-        """创建覆盖全屏的动画 Canvas"""
+        """创建透明 Toplevel，粒子浮在界面上方"""
+        self.update_idletasks()
         w = self.winfo_width()
         h = self.winfo_height()
-        cvs = tk.Canvas(self, width=w, height=h,
-                        highlightthickness=0, bg=C['bg'], bd=0)
-        cvs.place(x=0, y=0, relwidth=1, relheight=1)
-        cvs.lift()
+        x = self.winfo_rootx()
+        y = self.winfo_rooty()
+        TRANSP = '#010101'   # 近黑色作透明键（避开纯黑与粒子颜色冲突）
+
+        dlg = tk.Toplevel(self)
+        dlg.overrideredirect(True)
+        dlg.geometry(f'{w}x{h}+{x}+{y}')
+        dlg.configure(bg=TRANSP)
+        dlg.wm_attributes('-topmost', True)
+        try:
+            dlg.wm_attributes('-transparentcolor', TRANSP)
+        except tk.TclError:
+            pass  # 非 macOS 忽略
+
+        cvs = tk.Canvas(dlg, width=w, height=h,
+                        highlightthickness=0, bg=TRANSP, bd=0)
+        cvs.pack()
+
+        # 点击跳过
+        cvs.bind('<Button-1>', lambda e: dlg.destroy())
+        # 兜底：5 秒后强制销毁
+        dlg.after(5000, lambda: dlg.destroy() if dlg.winfo_exists() else None)
         return cvs, w, h
 
     def _launch_animation(self):
@@ -973,7 +992,10 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         while idx == self._last_anim_idx and len(animations) > 1:
             idx = random.randint(0, len(animations) - 1)
         self._last_anim_idx = idx
-        animations[idx]()
+        try:
+            animations[idx]()
+        except Exception:
+            pass
 
     def _anim_fireworks(self):
         """烟花爆炸"""
