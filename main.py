@@ -949,31 +949,19 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
             self.after(150, self._launch_animation)
 
     def _make_anim_canvas(self):
-        """在阅读区文本上方创建透明动画层"""
+        """在阅读区文本内部叠加动画 Canvas（背景与文本区一致，无黑色覆盖）"""
         self.update_idletasks()
         txt = self.text
         w = txt.winfo_width()
         h = txt.winfo_height()
-        x = txt.winfo_rootx()
-        y = txt.winfo_rooty()
-        TRANSP = 'black'
 
-        dlg = tk.Toplevel(self)
-        dlg.overrideredirect(True)
-        dlg.geometry(f'{w}x{h}+{x}+{y}')
-        dlg.configure(bg=TRANSP)
-        dlg.wm_attributes('-topmost', True)
-        try:
-            dlg.wm_attributes('-transparentcolor', TRANSP)
-        except tk.TclError:
-            pass
+        cvs = tk.Canvas(txt, width=w, height=h,
+                        highlightthickness=0, bg=C['bg'], bd=0)
+        cvs.place(x=0, y=0, relwidth=1, relheight=1)
+        cvs.lift()
 
-        cvs = tk.Canvas(dlg, width=w, height=h,
-                        highlightthickness=0, bg=TRANSP, bd=0)
-        cvs.pack()
-
-        cvs.bind('<Button-1>', lambda e: dlg.destroy())
-        dlg.after(5000, lambda: dlg.destroy() if dlg.winfo_exists() else None)
+        cvs.bind('<Button-1>', lambda e: cvs.destroy())
+        cvs.after(5000, lambda: cvs.destroy() if cvs.winfo_exists() else None)
         return cvs, w, h
 
     def _launch_animation(self):
