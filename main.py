@@ -1230,7 +1230,7 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
             if fp in self.store.files:
                 del self.store.files[fp]
                 self.store.save()
-            if self._current_file == fp:
+            if self._current_file and os.path.normcase(self._current_file) == os.path.normcase(fp):
                 self._current_file = None
                 self.text.delete('1.0', tk.END)
                 self._lbl_file.config(text="逐字稿")
