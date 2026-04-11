@@ -71,18 +71,17 @@ class AnnotationManager:
 
     def _configure_tags(self):
         for tag_name, style in ANNOT_STYLES.items():
-            kwargs = {}
-            if style['bg']:
-                kwargs['background'] = style['bg']
-            if style['fg']:
-                kwargs['foreground'] = style['fg']
+            # 始终显式设置 background/foreground，空字符串会重置为默认值
+            # 避免主题切换后旧颜色残留在 tag 上
+            self.text.tag_configure(tag_name,
+                                    background=style.get('bg', ''),
+                                    foreground=style.get('fg', ''))
             if tag_name == 'bold':
                 f = tkfont.Font(font=self.text['font'])
                 f.config(weight='bold')
-                kwargs['font'] = f
+                self.text.tag_configure(tag_name, font=f)
             if tag_name == 'underline':
-                kwargs['underline'] = True
-            self.text.tag_configure(tag_name, **kwargs)
+                self.text.tag_configure(tag_name, underline=True)
         try:
             self.text.tag_raise('search_match')
             self.text.tag_raise('search_current')
@@ -568,6 +567,7 @@ class AnnotationManager:
         self._refresh_panel()
 
     def _restore_annotations(self, filepath):
+        self._configure_tags()   # 确保 tag 颜色与当前主题一致
         for tag_name in ANNOT_STYLES:
             self.text.tag_remove(tag_name, '1.0', tk.END)
         annots = self.store.get_for_file(filepath)
