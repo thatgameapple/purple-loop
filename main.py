@@ -944,20 +944,41 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         self.store.save()
         if hasattr(self, '_refresh_author_lbl'):
             self._refresh_author_lbl()
-        # 彩蛋：第一次写入签名时触发烟花动画
-        if new_sig and not old_sig:
-            self._launch_fireworks()
+        # 彩蛋：每次修改签名触发随机动画
+        if new_sig:
+            self._launch_animation()
 
-    def _launch_fireworks(self):
-        """在主窗口上覆盖一个 Canvas，播放烟花粒子动画"""
-        import math, random
+    def _make_anim_canvas(self):
+        """创建覆盖全屏的动画 Canvas"""
         w = self.winfo_width()
         h = self.winfo_height()
         cvs = tk.Canvas(self, width=w, height=h,
                         highlightthickness=0, bg='', bd=0)
         cvs.place(x=0, y=0, relwidth=1, relheight=1)
         cvs.lift()
+        return cvs, w, h
 
+    def _launch_animation(self):
+        """随机选择一种庆祝动画，避免连续重复"""
+        import random
+        animations = [
+            self._anim_fireworks,
+            self._anim_confetti,
+            self._anim_bubbles,
+            self._anim_stars,
+        ]
+        if not hasattr(self, '_last_anim_idx'):
+            self._last_anim_idx = -1
+        idx = random.randint(0, len(animations) - 1)
+        while idx == self._last_anim_idx and len(animations) > 1:
+            idx = random.randint(0, len(animations) - 1)
+        self._last_anim_idx = idx
+        animations[idx]()
+
+    def _anim_fireworks(self):
+        """烟花爆炸"""
+        import math, random
+        cvs, w, h = self._make_anim_canvas()
         COLORS = ['#ff6b6b', '#ffd93d', '#6bcb77', '#4d96ff',
                   '#ff922b', '#cc5de8', '#f06595', '#74c0fc']
 
@@ -965,8 +986,7 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
             def __init__(self, cx, cy):
                 angle = random.uniform(0, 2 * math.pi)
                 speed = random.uniform(3, 9)
-                self.x = cx
-                self.y = cy
+                self.x, self.y = cx, cy
                 self.vx = math.cos(angle) * speed
                 self.vy = math.sin(angle) * speed
                 self.life = random.randint(30, 55)
@@ -978,51 +998,183 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
                     fill=self.color, outline='')
 
             def step(self):
-                self.vy += 0.25  # 重力
+                self.vy += 0.25
                 self.vx *= 0.97
                 self.x += self.vx
                 self.y += self.vy
                 self.life -= 1
-                alpha = self.life / self.max_life
-                # 用 stipple 近似透明度（16 级）
-                cvs.coords(self.item,
-                           self.x - 3, self.y - 3,
-                           self.x + 3, self.y + 3)
+                cvs.coords(self.item, self.x-3, self.y-3, self.x+3, self.y+3)
                 return self.life > 0
 
-        bursts = []
-        num_bursts = random.randint(4, 6)
-        for _ in range(num_bursts):
-            cx = random.uniform(w * 0.2, w * 0.8)
-            cy = random.uniform(h * 0.15, h * 0.55)
-            bursts.append({'cx': cx, 'cy': cy, 'delay': random.randint(0, 20)})
-
-        particles = []
-        frame = [0]
+        bursts = [{'cx': random.uniform(w*.2, w*.8),
+                   'cy': random.uniform(h*.15, h*.55),
+                   'delay': random.randint(0, 20)}
+                  for _ in range(random.randint(4, 6))]
+        particles, frame = [], [0]
 
         def tick():
-            f = frame[0]
-            frame[0] += 1
-            # 按延迟生成各次爆炸
+            f = frame[0]; frame[0] += 1
             for b in bursts:
                 if f == b['delay']:
                     for _ in range(random.randint(28, 40)):
                         particles.append(Particle(b['cx'], b['cy']))
-            # 更新粒子
             alive = []
             for p in particles:
-                if p.step():
-                    alive.append(p)
-                else:
-                    cvs.delete(p.item)
-            particles.clear()
-            particles.extend(alive)
-
+                if p.step(): alive.append(p)
+                else: cvs.delete(p.item)
+            particles.clear(); particles.extend(alive)
             if f < max(b['delay'] for b in bursts) + 70:
                 cvs.after(16, tick)
             else:
                 cvs.destroy()
+        tick()
 
+    def _anim_confetti(self):
+        """彩带雨：彩色小方块从顶端随风飘落"""
+        import random
+        cvs, w, h = self._make_anim_canvas()
+        COLORS = ['#ff6b6b', '#ffd93d', '#6bcb77', '#4d96ff',
+                  '#ff922b', '#cc5de8', '#f06595', '#74c0fc', '#20c997', '#fd7e14']
+
+        class Confetto:
+            def __init__(self):
+                self.x  = random.uniform(0, w)
+                self.y  = random.uniform(-60, -4)
+                self.vy = random.uniform(2.5, 5.5)
+                self.vx = random.uniform(-1.2, 1.2)
+                self.sw = random.randint(6, 16)
+                self.sh = random.randint(4, 10)
+                self.life = 220
+                color = random.choice(COLORS)
+                self.item = cvs.create_rectangle(
+                    self.x, self.y, self.x+self.sw, self.y+self.sh,
+                    fill=color, outline='')
+
+            def step(self):
+                self.vy += 0.08
+                self.vx += random.uniform(-0.1, 0.1)
+                self.x += self.vx; self.y += self.vy
+                self.life -= 1
+                cvs.coords(self.item, self.x, self.y, self.x+self.sw, self.y+self.sh)
+                return self.life > 0 and self.y < h + 20
+
+        pieces, frame = [], [0]
+
+        def tick():
+            f = frame[0]; frame[0] += 1
+            if f < 40:
+                for _ in range(4): pieces.append(Confetto())
+            alive = []
+            for p in pieces:
+                if p.step(): alive.append(p)
+                else: cvs.delete(p.item)
+            pieces.clear(); pieces.extend(alive)
+            if pieces or f < 50:
+                cvs.after(16, tick)
+            else:
+                cvs.destroy()
+        tick()
+
+    def _anim_bubbles(self):
+        """气泡上升：带高光的彩色气泡从底部冒起"""
+        import math, random
+        cvs, w, h = self._make_anim_canvas()
+        COLORS = ['#74c0fc', '#4d96ff', '#a9e34b', '#6bcb77',
+                  '#f06595', '#ffd43b', '#cc5de8', '#ff8787']
+
+        class Bubble:
+            def __init__(self):
+                self.x     = random.uniform(w * 0.1, w * 0.9)
+                self.y     = h + random.randint(0, 50)
+                self.r     = random.randint(12, 32)
+                self.vy    = random.uniform(1.8, 3.8)
+                self.phase = random.uniform(0, math.pi * 2)
+                self.life  = random.randint(70, 130)
+                color = random.choice(COLORS)
+                self.ring  = cvs.create_oval(
+                    self.x-self.r, self.y-self.r,
+                    self.x+self.r, self.y+self.r,
+                    outline=color, fill='', width=2)
+                hr = max(2, self.r // 4)
+                self.shine = cvs.create_oval(
+                    self.x-hr, self.y-self.r+4,
+                    self.x+hr, self.y-self.r+4+hr*2,
+                    fill='white', outline='')
+
+            def step(self, f):
+                self.y  -= self.vy
+                self.x  += math.sin(f * 0.08 + self.phase) * 0.9
+                self.life -= 1
+                r = self.r
+                cvs.coords(self.ring,  self.x-r, self.y-r, self.x+r, self.y+r)
+                hr = max(2, r // 4)
+                cvs.coords(self.shine,
+                           self.x-hr, self.y-r+4,
+                           self.x+hr, self.y-r+4+hr*2)
+                return self.life > 0 and self.y > -r
+
+        bubbles, frame = [], [0]
+
+        def tick():
+            f = frame[0]; frame[0] += 1
+            if f % 5 == 0 and f < 65:
+                bubbles.append(Bubble())
+            alive = []
+            for b in bubbles:
+                if b.step(f): alive.append(b)
+                else:
+                    cvs.delete(b.ring); cvs.delete(b.shine)
+            bubbles.clear(); bubbles.extend(alive)
+            if bubbles or f < 75:
+                cvs.after(16, tick)
+            else:
+                cvs.destroy()
+        tick()
+
+    def _anim_stars(self):
+        """星光闪耀：✦ 在屏幕各处短暂放大后消散"""
+        import random
+        cvs, w, h = self._make_anim_canvas()
+        COLORS = ['#ffd43b', '#ff6b6b', '#74c0fc', '#a9e34b', '#f06595', '#da77f2', '#ff922b']
+        CHARS  = ['✦', '★', '✸', '✺', '❋', '✿', '⚡', '💫']
+
+        class Star:
+            def __init__(self):
+                self.x        = random.uniform(w * 0.05, w * 0.95)
+                self.y        = random.uniform(h * 0.05, h * 0.88)
+                self.max_size = random.randint(22, 52)
+                self.life     = random.randint(28, 48)
+                self.max_life = self.life
+                self.item = cvs.create_text(
+                    self.x, self.y,
+                    text=random.choice(CHARS),
+                    fill=random.choice(COLORS),
+                    font=('PingFang SC', 6))
+
+            def step(self):
+                self.life -= 1
+                t  = 1 - self.life / self.max_life
+                sz = int(self.max_size * (t / 0.35)) if t < 0.35 \
+                     else int(self.max_size * (1 - (t - 0.35) / 0.65))
+                cvs.itemconfigure(self.item, font=('PingFang SC', max(6, sz)))
+                return self.life > 0
+
+        stars, frame = [], [0]
+        MAX_F = 90
+
+        def tick():
+            f = frame[0]; frame[0] += 1
+            if f % 3 == 0 and f < MAX_F - 20:
+                stars.append(Star())
+            alive = []
+            for s in stars:
+                if s.step(): alive.append(s)
+                else: cvs.delete(s.item)
+            stars.clear(); stars.extend(alive)
+            if stars or f < MAX_F:
+                cvs.after(16, tick)
+            else:
+                cvs.destroy()
         tick()
 
     # ── 弹窗输入框 ─────────────────────────────────────────
