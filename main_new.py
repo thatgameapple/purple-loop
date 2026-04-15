@@ -763,6 +763,12 @@ class TxtEditor(QTextEdit):
                 cur.setPosition(a['end'], QTextCursor.MoveMode.KeepAnchor)
                 self.setTextCursor(cur)
                 self.ensureCursorVisible()
+                # 让标注居中显示在阅读区
+                rect = self.cursorRect()
+                vp_h = self.viewport().height()
+                offset = rect.center().y() - vp_h // 2
+                sb = self.verticalScrollBar()
+                sb.setValue(sb.value() + offset)
                 return
 
     def annot_at_cursor(self) -> dict | None:
