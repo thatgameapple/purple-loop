@@ -20,17 +20,6 @@ from PyQt6.QtCore import (
     Qt, QTimer, QSize, QPoint, QRect, pyqtSignal, QThread, QObject
 )
 
-try:
-    import fitz          # pymupdf
-    _HAS_PDF = True
-except ImportError:
-    _HAS_PDF = False
-
-try:
-    import docx          # python-docx
-    _HAS_DOCX = True
-except ImportError:
-    _HAS_DOCX = False
 
 # ── 常量 ──────────────────────────────────────────────────────────────────
 DATA_FILE = Path.home() / '.purple-loop.json'
@@ -81,7 +70,7 @@ class FileStore:
 
     def __init__(self, path: Path):
         self.path = path
-        self.data: dict = {'imports': {}, 'annotations': {}, 'config': {}}
+        self.data: dict = {'annotations': {}, 'config': {}}
         self._load()
 
     def _load(self):
@@ -95,18 +84,6 @@ class FileStore:
         self.path.write_text(
             json.dumps(self.data, ensure_ascii=False, indent=2), 'utf-8')
 
-    # ── 导入记录 ──────────────────────────────────────────────
-    def add_import(self, path: str, ftype: str):
-        self.data.setdefault('imports', {})[path] = ftype
-        self.save()
-
-    def remove_import(self, path: str):
-        self.data.get('imports', {}).pop(path, None)
-        self.save()
-
-    def get_imports(self) -> dict:
-        return dict(self.data.get('imports', {}))
-
     # ── 单独拖入的 .txt 文件 ───────────────────────────────
     def add_txt(self, path: str):
         lst = self.data.setdefault('txt_files', [])
@@ -117,12 +94,26 @@ class FileStore:
     def get_txt_files(self) -> list:
         return [p for p in self.data.get('txt_files', []) if Path(p).exists()]
 
+    def remove_txt(self, path: str):
+        lst = self.data.get('txt_files', [])
+        if path in lst:
+            lst.remove(path)
+            self.save()
+
     # ── 配置 ──────────────────────────────────────────────────
     def get_config(self, key, default=None):
         return self.data.get('config', {}).get(key, default)
 
     def set_config(self, key, value):
         self.data.setdefault('config', {})[key] = value
+        self.save()
+
+    # ── 阅读位置 ──────────────────────────────────────────────
+    def get_read_pos(self, filepath: str) -> int:
+        return self.data.get('read_positions', {}).get(filepath, 0)
+
+    def set_read_pos(self, filepath: str, pos: int):
+        self.data.setdefault('read_positions', {})[filepath] = pos
         self.save()
 
     # ── 标注 ──────────────────────────────────────────────────
@@ -469,10 +460,12 @@ class TxtEditor(QTextEdit):
 
         # 字体
         self._set_font()
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         self.setStyleSheet(f"""
             QTextEdit {{
                 background: {C['bg']}; color: {C['fg']};
-                border: none; padding: 40px 60px;
+                border: none; padding: 0;
                 selection-background-color: #4a4a55;
                 selection-color: #e0e0e0;
             }}
@@ -503,7 +496,6 @@ class TxtEditor(QTextEdit):
         pal.setColor(QPalette.ColorRole.HighlightedText, QColor('#e0e0e0'))
         self.setPalette(pal)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.setReadOnly(False)
 
         # 偏移追踪
         self.document().contentsChange.connect(self._on_change)
@@ -523,17 +515,34 @@ class TxtEditor(QTextEdit):
             f = QFont('PingFang SC', 18)
         f.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
         self.setFont(f)
-        # 行间距
-        fmt = self.document().defaultTextOption()
-        self.document().setDefaultTextOption(fmt)
+        # 行间距 1.65（研究最优值：中文黑底）
+        self._apply_line_spacing()
+
+    def _apply_line_spacing(self):
+        from PyQt6.QtGui import QTextBlockFormat
+        cur = QTextCursor(self.document())
+        cur.select(QTextCursor.SelectionType.Document)
+        blk_fmt = QTextBlockFormat()
+        blk_fmt.setLineHeight(165, 1)  # 1 = ProportionalHeight (百分比)
+        cur.setBlockFormat(blk_fmt)
 
     def load_file(self, path: str):
+        # 保存当前文件的阅读位置
+        if self._fp:
+            self.store.set_read_pos(self._fp, self.verticalScrollBar().value())
+
         self._fp      = path
         self._loading = True
         text = Path(path).read_text('utf-8')
         self.setPlainText(text)
         self._loading = False
+        self._apply_line_spacing()   # setPlainText 会重置 block format
         self._apply_annotations()
+
+        # 恢复阅读位置（延迟到布局完成后）
+        saved_pos = self.store.get_read_pos(path)
+        QTimer.singleShot(50, lambda: self.verticalScrollBar().setValue(saved_pos))
+
 
     def _apply_annotations(self):
         if not self._fp:
@@ -668,6 +677,26 @@ class TxtEditor(QTextEdit):
 
         menu.exec(event.globalPos())
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if getattr(self, '_in_resize', False):
+            return
+        self._in_resize = True
+        self._update_margins()
+        self._in_resize = False
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, self._update_margins)
+
+    def _update_margins(self):
+        content_w = 600
+        w = self.width()
+        if w <= 0:
+            return
+        side = max(60, (w - content_w) // 2)
+        self.setViewportMargins(side, 48, side, 16)
+
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)
         if event.button() == Qt.MouseButton.LeftButton:
@@ -696,79 +725,6 @@ class TxtEditor(QTextEdit):
                 return
         super().keyPressEvent(event)
 
-
-# ── PDF 查看器 ────────────────────────────────────────────────────────────
-
-class PdfViewer(QScrollArea):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWidgetResizable(True)
-        self.setStyleSheet(f"background: {C['bg']}; border: none;")
-        inner = QWidget()
-        inner.setStyleSheet(f"background: {C['bg']};")
-        self._layout = QVBoxLayout(inner)
-        self._layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        self._layout.setSpacing(12)
-        self._layout.setContentsMargins(40, 40, 40, 40)
-        self.setWidget(inner)
-
-    def load(self, path: str):
-        # 清空
-        while self._layout.count():
-            item = self._layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
-        if not _HAS_PDF:
-            lbl = QLabel("需要安装 pymupdf\npip install pymupdf")
-            lbl.setStyleSheet(f"color: {C['fg_dim']}; font-size: 16px;")
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._layout.addWidget(lbl)
-            return
-
-        doc = fitz.open(path)
-        for page in doc:
-            mat  = fitz.Matrix(2, 2)        # 2× 分辨率
-            pix  = page.get_pixmap(matrix=mat)
-            img  = QImage(pix.samples, pix.width, pix.height,
-                          pix.stride, QImage.Format.Format_RGB888)
-            lbl  = QLabel()
-            pm   = QPixmap.fromImage(img)
-            lbl.setPixmap(pm)
-            lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-            lbl.setStyleSheet("background: transparent;")
-            # 缩放到 800px 宽
-            if pm.width() > 800:
-                lbl.setPixmap(pm.scaledToWidth(
-                    800, Qt.TransformationMode.SmoothTransformation))
-            self._layout.addWidget(lbl)
-        doc.close()
-
-
-# ── Word 查看器 ───────────────────────────────────────────────────────────
-
-class WordViewer(QTextEdit):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setReadOnly(True)
-        f = QFont('LXGW WenKai', 18)
-        if not f.exactMatch():
-            f = QFont('PingFang SC', 18)
-        self.setFont(f)
-        self.setStyleSheet(f"""
-            QTextEdit {{
-                background: {C['bg']}; color: {C['fg']};
-                border: none; padding: 40px 60px;
-            }}
-        """)
-
-    def load(self, path: str):
-        if not _HAS_DOCX:
-            self.setPlainText("需要安装 python-docx\npip install python-docx")
-            return
-        doc  = docx.Document(path)
-        text = '\n'.join(p.text for p in doc.paragraphs)
-        self.setPlainText(text)
 
 
 # ── 侧边栏 ────────────────────────────────────────────────────────────────
@@ -825,7 +781,6 @@ class Sidebar(QTreeWidget):
         self.clear()
 
         tag_tree   = TagScanner.build_tree(txt_files)
-        imports    = self.store.get_imports()
         untagged   = [f for f in txt_files
                       if not TagScanner.scan(f)]
 
@@ -873,18 +828,6 @@ class Sidebar(QTreeWidget):
             hdr.setFont(0, QFont('PingFang SC', 11))
             for fp in sorted(untagged, key=lambda x: Path(x).stat().st_mtime, reverse=True):
                 fi = QTreeWidgetItem(hdr, [f"  {Path(fp).stem}"])
-                fi.setData(0, Qt.ItemDataRole.UserRole, ('file', fp))
-                fi.setForeground(0, QColor(C['fg_file']))
-
-        # ── 导入文件（Word / PDF）────────────────────────────
-        if imports:
-            hdr2 = QTreeWidgetItem(self.invisibleRootItem(), ['导入文件'])
-            hdr2.setData(0, Qt.ItemDataRole.UserRole, ('header', ''))
-            hdr2.setForeground(0, QColor(C['fg_dim']))
-            hdr2.setFont(0, QFont('PingFang SC', 11))
-            for fp, ftype in imports.items():
-                icon = '📄' if ftype == 'pdf' else '📝'
-                fi = QTreeWidgetItem(hdr2, [f"  {icon} {Path(fp).stem}"])
                 fi.setData(0, Qt.ItemDataRole.UserRole, ('file', fp))
                 fi.setForeground(0, QColor(C['fg_file']))
 
@@ -958,19 +901,13 @@ class Sidebar(QTreeWidget):
                 fp = data[1]
                 act_reveal = menu.addAction('在 Finder 中显示')
                 act_reveal.triggered.connect(
-                    lambda: subprocess.run(['open', '-R', fp]))
-                if fp in self.store.get_imports():
-                    act_rm = menu.addAction('从导入列表移除')
+                    lambda checked=False, f=fp: subprocess.run(['open', '-R', f]))
+                if fp in self.store.get_txt_files():
+                    act_rm = menu.addAction('移除')
                     act_rm.triggered.connect(
-                        lambda: (self.store.remove_import(fp),
+                        lambda checked=False, f=fp: (self.store.remove_txt(f),
                                  self.window()._refresh_sidebar()))
                 menu.addSeparator()
-
-        # 通用操作
-        act_scan = menu.addAction('设置 TXT 目录…')
-        act_scan.triggered.connect(self.window()._set_txt_dir)
-        act_import = menu.addAction('导入 Word / PDF…')
-        act_import.triggered.connect(self.window()._import_file)
 
         menu.exec(self.mapToGlobal(pos))
 
@@ -1158,8 +1095,6 @@ class MainWindow(QMainWindow):
         self._txt_editor = TxtEditor(self.store)
         self._txt_editor.mouse_released.connect(self._on_mouse_released)
         self._txt_editor._save_timer.timeout.connect(self._refresh_sidebar)
-        self._pdf_viewer = PdfViewer()
-        self._word_viewer = WordViewer()
         self._empty_lbl  = QLabel('将文件拖入此处，或双击左侧文件打开')
         self._empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_lbl.setStyleSheet(
@@ -1167,8 +1102,6 @@ class MainWindow(QMainWindow):
 
         self._stack.addWidget(self._empty_lbl)
         self._stack.addWidget(self._txt_editor)
-        self._stack.addWidget(self._pdf_viewer)
-        self._stack.addWidget(self._word_viewer)
         ew_lay.addWidget(self._stack, 1)
 
         # 搜索栏
@@ -1209,6 +1142,24 @@ class MainWindow(QMainWindow):
         self.statusBar().setStyleSheet(
             f"background: {C['bg_input']}; color: {C['fg_dim']}; font-size: 12px;")
 
+        # 呼吸灯：状态栏文字颜色缓慢呼吸
+        import math
+        self._breath_step = 0
+        self._breath_timer = QTimer(self)
+        self._breath_timer.setInterval(50)
+        self._breath_timer.timeout.connect(self._breathe)
+        self._breath_timer.start()
+
+    def _breathe(self):
+        import math
+        self._breath_step += 1
+        # 6秒一个周期，在 #3a3a3a 和 #6e6e6e 之间缓慢变化
+        val = (math.sin(self._breath_step * 0.05) + 1) / 2
+        v = int(0x3a + val * 0x34)
+        color = f"#{v:02x}{v:02x}{v:02x}"
+        self.statusBar().setStyleSheet(
+            f"background: {C['bg_input']}; color: {color}; font-size: 12px;")
+
     # ── 菜单 ──────────────────────────────────────────────────
     def _build_menu(self):
         mb = self.menuBar()
@@ -1239,8 +1190,6 @@ class MainWindow(QMainWindow):
         # 文件
         fm = mb.addMenu('文件')
         fm.setStyleSheet(_ms)
-        _act(fm, '设置 TXT 目录…', self._set_txt_dir)
-        _act(fm, '导入 Word / PDF…', self._import_file)
         fm.addSeparator()
         _act(fm, '保存', self._save, 'Ctrl+S')
         fm.addSeparator()
@@ -1284,16 +1233,7 @@ class MainWindow(QMainWindow):
 
     # ── 侧栏刷新 ──────────────────────────────────────────────
     def _refresh_sidebar(self):
-        txt_files = []
-        # 1. txt_dir 目录扫描
-        txt_dir = self.store.get_config('txt_dir')
-        if txt_dir and Path(txt_dir).exists():
-            txt_files += [str(f) for f in Path(txt_dir).rglob('*.txt')
-                          if not f.name.startswith('.')]
-        # 2. 单独拖入的 .txt 文件
-        for p in self.store.get_txt_files():
-            if p not in txt_files:
-                txt_files.append(p)
+        txt_files = self.store.get_txt_files()
         self._sidebar.refresh(txt_files)
 
     # ── 文件操作 ──────────────────────────────────────────────
@@ -1307,52 +1247,16 @@ class MainWindow(QMainWindow):
             QMenu::item {{ padding: 6px 20px; border-radius: 4px; }}
             QMenu::item:selected {{ background: {C['bg_sel']}; }}
         """)
-        a1 = QAction('设置 TXT 目录…', self)
-        a1.triggered.connect(self._set_txt_dir)
-        menu.addAction(a1)
-        a2 = QAction('导入 Word / PDF…', self)
-        a2.triggered.connect(self._import_file)
-        menu.addAction(a2)
         btn = self.sender()
         menu.exec(btn.mapToGlobal(QPoint(0, btn.height())))
 
-    def _set_txt_dir(self):
-        d = QFileDialog.getExistingDirectory(
-            self, '选择 TXT 文件目录',
-            self.store.get_config('txt_dir') or str(Path.home()))
-        if d:
-            self.store.set_config('txt_dir', d)
-            self._refresh_sidebar()
-            self.statusBar().showMessage(f'TXT 目录：{d}', 3000)
-
-    def _import_file(self):
-        paths, _ = QFileDialog.getOpenFileNames(
-            self, '导入文件', str(Path.home()),
-            'Word / PDF (*.docx *.doc *.pdf)')
-        for p in paths:
-            ext = Path(p).suffix.lower()
-            ftype = 'pdf' if ext == '.pdf' else 'docx'
-            self.store.add_import(p, ftype)
-        if paths:
-            self._refresh_sidebar()
-
     def _open_file(self, path: str):
         self._fp = path
-        ext = Path(path).suffix.lower()
         self._annot_bar.hide()
         self._note_bar.hide()
-
-        if ext == '.txt':
-            self._txt_editor.load_file(path)
-            self._stack.setCurrentWidget(self._txt_editor)
-        elif ext == '.pdf':
-            self._pdf_viewer.load(path)
-            self._stack.setCurrentWidget(self._pdf_viewer)
-        else:  # docx
-            self._word_viewer.load(path)
-            self._stack.setCurrentWidget(self._word_viewer)
-
-        self._annot_panel.refresh(path if ext == '.txt' else None)
+        self._txt_editor.load_file(path)
+        self._annot_panel.refresh(path)
+        self._stack.setCurrentWidget(self._txt_editor)
         self.statusBar().showMessage(Path(path).name, 0)
 
     def _save(self):
@@ -1372,11 +1276,9 @@ class MainWindow(QMainWindow):
         old_tag = f"#{old_path}"
         new_tag = f"#{new_path}"
 
-        txt_dir = self.store.get_config('txt_dir')
-        if not txt_dir:
-            return
         changed = 0
-        for fp in Path(txt_dir).rglob('*.txt'):
+        for fp_str in self.store.get_txt_files():
+            fp = Path(fp_str)
             try:
                 text = fp.read_text('utf-8')
                 if old_tag in text:
@@ -1390,11 +1292,9 @@ class MainWindow(QMainWindow):
 
     def _merge_tag(self, src: str, dst: str):
         """将 #src 全部替换为 #dst"""
-        txt_dir = self.store.get_config('txt_dir')
-        if not txt_dir:
-            return
         changed = 0
-        for fp in Path(txt_dir).rglob('*.txt'):
+        for fp_str in self.store.get_txt_files():
+            fp = Path(fp_str)
             try:
                 text = fp.read_text('utf-8')
                 if f'#{src}' in text:
@@ -1538,7 +1438,7 @@ class MainWindow(QMainWindow):
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
             exts = {Path(u.toLocalFile()).suffix.lower() for u in urls}
-            if exts & {'.txt', '.pdf', '.docx', '.doc'}:
+            if exts & {'.txt'}:
                 event.acceptProposedAction()
                 return
         event.ignore()
@@ -1547,18 +1447,21 @@ class MainWindow(QMainWindow):
         for url in event.mimeData().urls():
             fp  = url.toLocalFile()
             ext = Path(fp).suffix.lower()
-            if ext == '.txt':
-                self.store.add_txt(fp)   # 记录到持久化列表
-                self._open_file(fp)
-            elif ext in ('.pdf', '.docx', '.doc'):
-                ftype = 'pdf' if ext == '.pdf' else 'docx'
-                self.store.add_import(fp, ftype)
-                self._open_file(fp)
+            try:
+                if ext == '.txt':
+                    self.store.add_txt(fp)
+                    self._open_file(fp)
+            except Exception as e:
+                self.statusBar().showMessage(f'无法打开：{e}', 3000)
         self._refresh_sidebar()
         event.acceptProposedAction()
 
     def closeEvent(self, event):
         self._txt_editor.save()
+        # 保存当前阅读位置
+        if self._fp:
+            self.store.set_read_pos(
+                self._fp, self._txt_editor.verticalScrollBar().value())
         super().closeEvent(event)
 
 
