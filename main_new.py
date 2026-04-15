@@ -278,6 +278,7 @@ class AnnotBar(QFrame):
 
 class AnnotPanel(QScrollArea):
     jump_to = pyqtSignal(str)   # annot_id
+    delete  = pyqtSignal(str)   # annot_id
 
     def __init__(self, store: FileStore, parent=None):
         super().__init__(parent)
@@ -312,23 +313,39 @@ class AnnotPanel(QScrollArea):
             self._cards[annot['id']] = card
 
     def _make_card(self, annot: dict) -> QFrame:
-        bg, dot = C.get(annot['type'], (C['bg_input'], C['accent']))
+        _, dot = C.get(annot['type'], (None, C['accent']))
+        dot = dot or C['accent']
         card = QFrame()
         card.setStyleSheet(f"""
             QFrame {{
                 background: {C['bg_input']}; border-radius: 6px;
-                border-left: 3px solid {dot or C['accent']};
+                border-left: 3px solid {dot};
             }}
+            QFrame:hover {{ background: #2a2d32; }}
         """)
-        card.setCursor(Qt.CursorShape.PointingHandCursor)
         lay = QVBoxLayout(card)
-        lay.setContentsMargins(10, 8, 10, 8)
+        lay.setContentsMargins(10, 8, 6, 8)
         lay.setSpacing(4)
 
-        # 类型标签
+        # 顶栏：类型标签 + 删除按钮
+        top = QHBoxLayout()
         type_lbl = QLabel(ANNOT_LABEL.get(annot['type'], annot['type']))
-        type_lbl.setStyleSheet(f"color: {dot or C['accent']}; font-size: 11px;")
-        lay.addWidget(type_lbl)
+        type_lbl.setStyleSheet(f"color: {dot}; font-size: 11px;")
+        top.addWidget(type_lbl)
+        top.addStretch()
+        del_btn = QPushButton('✕')
+        del_btn.setFixedSize(18, 18)
+        del_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {C['fg_dim']};
+                border: none; font-size: 10px;
+            }}
+            QPushButton:hover {{ color: #ff6b6b; }}
+        """)
+        aid = annot['id']
+        del_btn.clicked.connect(lambda _, a=aid: self.delete.emit(a))
+        top.addWidget(del_btn)
+        lay.addLayout(top)
 
         # 原文预览
         preview = annot['text'][:50].replace('\n', ' ')
@@ -346,8 +363,8 @@ class AnnotPanel(QScrollArea):
             note_lbl.setWordWrap(True)
             lay.addWidget(note_lbl)
 
-        aid = annot['id']
-        card.mousePressEvent = lambda e, a=aid: self.jump_to.emit(a)
+        card.mousePressEvent = lambda e, a=aid: (
+            self.jump_to.emit(a) if e.button() == Qt.MouseButton.LeftButton else None)
         return card
 
 
@@ -1019,6 +1036,7 @@ class MainWindow(QMainWindow):
         self._fp:  str | None = None
         self._search_matches: list = []
         self._search_idx = -1
+        self._pending_annot_id: str | None = None  # 工具条对应的标注 id
 
         self._load_fonts()
         self._build_ui()
@@ -1142,6 +1160,7 @@ class MainWindow(QMainWindow):
         # 标注面板
         self._annot_panel = AnnotPanel(self.store)
         self._annot_panel.jump_to.connect(self._jump_to_annot)
+        self._annot_panel.delete.connect(self._delete_annot_by_id)
         self._annot_panel.setMinimumWidth(160)
         self._annot_panel.setMaximumWidth(300)
         self._content_split.addWidget(self._annot_panel)
@@ -1379,6 +1398,9 @@ class MainWindow(QMainWindow):
         y    = max(4, min(y, scr.height() - sh.height() - 4))
         self._annot_bar.move(x, y)
         self._annot_bar.show()
+        # 记录光标处已有的标注（供 ✕ 删除用）
+        a = self._txt_editor.annot_at_cursor()
+        self._pending_annot_id = a['id'] if a else None
 
     def _do_annotate(self, atype: str):
         annot = self._txt_editor.annotate(atype)
@@ -1387,8 +1409,20 @@ class MainWindow(QMainWindow):
             self._annot_panel.refresh(self._fp)
 
     def _do_remove_annot(self):
-        self._txt_editor.remove_at_cursor()
+        """工具条 ✕：优先用记录的 id，其次用光标位置"""
+        if self._pending_annot_id and self._fp:
+            self._delete_annot_by_id(self._pending_annot_id)
+        else:
+            self._txt_editor.remove_at_cursor()
+            self._annot_panel.refresh(self._fp)
         self._annot_bar.hide()
+        self._pending_annot_id = None
+
+    def _delete_annot_by_id(self, annot_id: str):
+        if not self._fp:
+            return
+        self.store.remove_annotation(self._fp, annot_id)
+        self._txt_editor._apply_annotations()
         self._annot_panel.refresh(self._fp)
 
     def _jump_to_annot(self, annot_id: str):
