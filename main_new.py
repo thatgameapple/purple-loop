@@ -476,6 +476,27 @@ class TxtEditor(QTextEdit):
                 selection-background-color: #4a4a55;
                 selection-color: #e0e0e0;
             }}
+            QScrollBar:vertical {{
+                background: transparent;
+                width: 6px;
+                margin: 0;
+            }}
+            QScrollBar::handle:vertical {{
+                background: #3a3a3e;
+                border-radius: 3px;
+                min-height: 30px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: #555558;
+            }}
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {{
+                height: 0;
+            }}
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {{
+                background: transparent;
+            }}
         """)
         pal = self.palette()
         pal.setColor(QPalette.ColorRole.Highlight,       QColor('#4a4a55'))
