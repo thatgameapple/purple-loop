@@ -1004,6 +1004,19 @@ class Sidebar(QTreeWidget):
         """展开/收起时保存状态到 store"""
         self.store.set_config(self._persist_key, list(self._save_expanded()))
 
+    # ── 置顶标签 ──────────────────────────────────────────────
+    def _get_pinned(self) -> list[str]:
+        return self.store.get_config('pinned_tags', [])
+
+    def _toggle_pin(self, tag_path: str):
+        pinned = self._get_pinned()
+        if tag_path in pinned:
+            pinned.remove(tag_path)
+        else:
+            pinned.insert(0, tag_path)
+        self.store.set_config('pinned_tags', pinned)
+        self.window()._refresh_sidebar()
+
     def refresh(self, txt_files: list[str]):
         self._txt_files = txt_files
         # 优先用当前内存状态，其次从 store 读取持久状态
@@ -1016,13 +1029,29 @@ class Sidebar(QTreeWidget):
                 expanded = None   # None = 首次，默认全展开
         self.clear()
 
-        tag_tree   = TagScanner.build_tree(txt_files)
-        untagged   = [f for f in txt_files
-                      if not TagScanner.scan(f)]
+        tag_tree = TagScanner.build_tree(txt_files)
+        untagged = [f for f in txt_files if not TagScanner.scan(f)]
+        pinned   = self._get_pinned()
+
+        # ── 置顶标签区 ────────────────────────────────────────
+        valid_pinned = [t for t in pinned if t in tag_tree]
+        if valid_pinned:
+            pin_hdr = QTreeWidgetItem(self.invisibleRootItem(), ['置顶标签'])
+            pin_hdr.setData(0, Qt.ItemDataRole.UserRole, ('header', '__pinned__'))
+            pin_hdr.setForeground(0, QColor(C['fg_dim']))
+            pin_hdr.setFont(0, QFont('PingFang SC', 11))
+            pin_hdr.setFlags(pin_hdr.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            for tp in valid_pinned:
+                count = len(tag_tree.get(tp, []))
+                pi = QTreeWidgetItem(pin_hdr, [f'# {tp.split("/")[-1]}  {count}'])
+                pi.setData(0, Qt.ItemDataRole.UserRole, ('tag_pin', tp))
+                pi.setForeground(0, QColor(C['accent']))
+                pi.setFont(0, QFont('PingFang SC', 13))
+                pi.setBackground(0, QColor('#1c2a3a'))
+            pin_hdr.setExpanded(True)
 
         # ── 标签树 ───────────────────────────────────────────
         def add_tag_node(parent_item, tag_path: str, depth: int):
-            tag    = self.store  # unused, just tag_path
             parts  = tag_path.split('/')
             name   = parts[-1]
             files  = tag_tree.get(tag_path, [])
@@ -1054,7 +1083,7 @@ class Sidebar(QTreeWidget):
 
         roots = {t for t in tag_tree if '/' not in t}
         for tag in sorted(roots):
-            node = add_tag_node(self.invisibleRootItem(), tag, 0)
+            add_tag_node(self.invisibleRootItem(), tag, 0)
 
         # ── 未分类 .txt ───────────────────────────────────────
         if untagged:
@@ -1073,6 +1102,7 @@ class Sidebar(QTreeWidget):
         data = item.data(0, Qt.ItemDataRole.UserRole)
         if data and data[0] == 'file':
             self.file_selected.emit(data[1])
+        # tag_pin 单击也可以跳转（通过 itemClicked → 此处无需额外处理）
 
     def _save_expanded(self) -> set:
         result = set()
@@ -1114,24 +1144,34 @@ class Sidebar(QTreeWidget):
 
         if item:
             data = item.data(0, Qt.ItemDataRole.UserRole)
-            if data and data[0] == 'tag':
+            if data and data[0] in ('tag', 'tag_pin'):
                 tag_path = data[1]
                 tag_name = tag_path.split('/')[-1]
+                pinned   = self._get_pinned()
 
-                # 重命名
-                act = menu.addAction(f'重命名「{tag_name}」')
-                act.triggered.connect(lambda: self._rename_tag(tag_path))
+                # 置顶 / 取消置顶
+                if tag_path in pinned:
+                    pa = menu.addAction('取消置顶')
+                else:
+                    pa = menu.addAction('⭐ 置顶')
+                pa.triggered.connect(lambda _, t=tag_path: self._toggle_pin(t))
+                menu.addSeparator()
 
-                # 合并到
-                all_tags = self._collect_all_tags()
-                if len(all_tags) > 1:
-                    merge_menu = menu.addMenu('合并到')
-                    merge_menu.setStyleSheet(menu.styleSheet())
-                    for t in all_tags:
-                        if t != tag_path:
-                            a = merge_menu.addAction(t)
-                            a.triggered.connect(
-                                lambda _, s=tag_path, d=t: self._merge_tag(s, d))
+                # 重命名（仅普通标签）
+                if data[0] == 'tag':
+                    act = menu.addAction(f'重命名「{tag_name}」')
+                    act.triggered.connect(lambda: self._rename_tag(tag_path))
+
+                    # 合并到
+                    all_tags = self._collect_all_tags()
+                    if len(all_tags) > 1:
+                        merge_menu = menu.addMenu('合并到')
+                        merge_menu.setStyleSheet(menu.styleSheet())
+                        for t in all_tags:
+                            if t != tag_path:
+                                a = merge_menu.addAction(t)
+                                a.triggered.connect(
+                                    lambda _, s=tag_path, d=t: self._merge_tag(s, d))
 
                 menu.addSeparator()
 
