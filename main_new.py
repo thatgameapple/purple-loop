@@ -28,6 +28,23 @@ TAG_RE    = re.compile(r'#([\w\u4e00-\u9fff]+(?:/[\w\u4e00-\u9fff]+)*)')
 IS_MAC    = sys.platform == 'darwin'
 MOD       = Qt.KeyboardModifier.MetaModifier if IS_MAC else Qt.KeyboardModifier.ControlModifier
 
+# ── 语气词/口语填充词 ──────────────────────────────────────────────────────
+# 单字语气助词（句末）+ 叹词 + 高频口头禅
+_FILLER_PARTS = [
+    # 叹词 / 犹豫音
+    '嗯嗯', '嗯呀', '哎呀', '诶呀',
+    '嗯', '哎', '诶', '哦', '噢', '哇', '哎哟', '哟',
+    # 句末语气助词
+    '啊', '吧', '呢', '嘛', '呀', '啦', '咯', '哩', '喽',
+    # 高频口头禅 / 话语标记（先长后短，避免短的先匹配）
+    '就是说', '也就是说', '你知道吧', '你知道', '怎么说呢', '怎么说',
+    '然后呢', '然后', '就是', '那个', '这个',
+    '对对对', '对对', '好吧', '是吧', '是啊',
+    '反正', '其实',
+]
+# 构建正则：先匹配长词，词间不加边界（中文无空格边界）
+FILLER_RE = re.compile('(' + '|'.join(re.escape(w) for w in _FILLER_PARTS) + ')')
+
 # 字体目录
 _APP_DIR  = Path(__file__).parent
 FONTS_DIR = _APP_DIR / 'fonts'
@@ -607,11 +624,19 @@ class DocHighlighter(QSyntaxHighlighter):
         super().__init__(doc)
         self.store  = store
         self._fp: str | None = None
+        self._show_fillers = False
         self._tag_fmt = QTextCharFormat()
         self._tag_fmt.setForeground(QColor(C['accent']))
+        # 语气词格式：低调暖色，只改字色，不加底色，不影响阅读
+        self._filler_fmt = QTextCharFormat()
+        self._filler_fmt.setForeground(QColor('#a07848'))   # 哑金色
 
     def set_file(self, filepath: str | None):
         self._fp = filepath
+        self.rehighlight()
+
+    def set_show_fillers(self, enabled: bool):
+        self._show_fillers = enabled
         self.rehighlight()
 
     def _annot_fmt(self, annot: dict) -> QTextCharFormat:
@@ -660,6 +685,11 @@ class DocHighlighter(QSyntaxHighlighter):
             if lo >= hi:
                 continue
             self.setFormat(lo, hi - lo, self._annot_fmt(annot))
+
+        # 3. 语气词高亮（最后叠加，不覆盖标注颜色）
+        if self._show_fillers:
+            for m in FILLER_RE.finditer(text):
+                self.setFormat(m.start(), m.end() - m.start(), self._filler_fmt)
 
 
 # ── txt 编辑器 ───────────────────────────────────────────────────────────
@@ -2241,6 +2271,12 @@ class MainWindow(QMainWindow):
         _act(vm, '跳到文章开头', self._go_top,    'Ctrl+Up')
         _act(vm, '跳到文章末尾', self._go_bottom, 'Ctrl+Down')
         vm.addSeparator()
+        self._filler_action = QAction('语气词高亮', self)
+        self._filler_action.setCheckable(True)
+        self._filler_action.setChecked(False)
+        self._filler_action.triggered.connect(self._toggle_fillers)
+        vm.addAction(self._filler_action)
+        vm.addSeparator()
         _act(vm, '刷新侧栏', self._refresh_sidebar, 'F5')
 
     def _apply_theme(self):
@@ -2295,6 +2331,10 @@ class MainWindow(QMainWindow):
             self.statusBar().show()
             self._progress_bar.show()
             self._txt_editor._count_lbl.show()
+
+    def _toggle_fillers(self):
+        enabled = self._filler_action.isChecked()
+        self._txt_editor._highlighter.set_show_fillers(enabled)
 
     def _go_top(self):
         ed = self._txt_editor
