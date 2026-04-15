@@ -1217,208 +1217,152 @@ class Sidebar(QTreeWidget):
             self.tag_merge.emit(src, dst)
 
 
-# ── 文件内搜索浮动面板 ────────────────────────────────────────────────────
+# ── 文件内搜索浮动条 ──────────────────────────────────────────────────────
 
 class SearchPanel(QFrame):
-    """右上角浮动搜索面板：显示结果列表，点击跳转"""
-    jump_to  = pyqtSignal(int)   # match index
-    closed   = pyqtSignal()
+    """右上角单行搜索条：所有命中在编辑器里高亮，↑/↓ 逐条跳转"""
+    jump_to = pyqtSignal(int)   # match index
+    closed  = pyqtSignal()
+
+    _BTN = f"""
+        QPushButton {{
+            background: {C['bg_sel']}; color: {C['fg']};
+            border: none; border-radius: 4px; font-size: 12px;
+        }}
+        QPushButton:hover {{ background: {C['accent']}; color: white; }}
+        QPushButton:checked {{ background: {C['accent']}; color: white; }}
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(420)
+        self.setFixedHeight(44)
+        self.setFixedWidth(380)
+        self.setObjectName('SearchPanel')
         self.setStyleSheet(f"""
             QFrame#SearchPanel {{
                 background: {C['bg_input']};
                 border: 1px solid {C['border']};
-                border-radius: 10px;
+                border-radius: 8px;
             }}
         """)
-        self.setObjectName('SearchPanel')
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-
-        # ── 顶部搜索输入 ─────────────────────────────
-        top = QFrame()
-        top.setStyleSheet(
-            f"background: transparent; border-bottom: 1px solid {C['border']};")
-        top_lay = QHBoxLayout(top)
-        top_lay.setContentsMargins(10, 8, 8, 8)
-        top_lay.setSpacing(6)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(10, 0, 8, 0)
+        lay.setSpacing(6)
 
         self._input = QLineEdit()
         self._input.setPlaceholderText('在此文件中搜索…')
         self._input.setStyleSheet(f"""
             QLineEdit {{
-                background: {C['bg']}; color: {C['fg']};
-                border: none; border-radius: 5px;
-                padding: 5px 8px; font-size: 14px;
+                background: transparent; color: {C['fg']};
+                border: none; font-size: 14px;
             }}
         """)
         self._input.textChanged.connect(self._on_text)
-        top_lay.addWidget(self._input, 1)
+        # Enter → 下一个；Shift+Enter → 上一个
+        self._input.returnPressed.connect(self._next)
+        lay.addWidget(self._input, 1)
 
+        # 计数 "3 / 12"
         self._count_lbl = QLabel('')
         self._count_lbl.setStyleSheet(
-            f"color: {C['fg_dim']}; font-size: 11px; min-width: 32px;")
-        top_lay.addWidget(self._count_lbl)
+            f"color: {C['fg_dim']}; font-size: 11px; min-width: 44px;"
+            f"qproperty-alignment: AlignRight;")
+        lay.addWidget(self._count_lbl)
 
-        # 上 / 下 导航
-        for icon, tip, slot in [('↑', '上一个', self._prev), ('↓', '下一个', self._next)]:
+        # 大小写
+        self._case_btn = QPushButton('Aa')
+        self._case_btn.setFixedSize(26, 26)
+        self._case_btn.setCheckable(True)
+        self._case_btn.setToolTip('区分大小写')
+        self._case_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._case_btn.setStyleSheet(self._BTN)
+        self._case_btn.clicked.connect(self._emit_search)
+        lay.addWidget(self._case_btn)
+
+        # 上 / 下
+        for icon, tip, slot in [('↑', '上一个 (Shift+Enter)', self._prev),
+                                 ('↓', '下一个 (Enter)',      self._next)]:
             b = QPushButton(icon)
-            b.setFixedSize(22, 22)
+            b.setFixedSize(26, 26)
             b.setToolTip(tip)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.setStyleSheet(f"""
-                QPushButton {{
-                    background: {C['bg_sel']}; color: {C['fg']};
-                    border: none; border-radius: 4px; font-size: 13px;
-                }}
-                QPushButton:hover {{ background: {C['accent']}; color: white; }}
-            """)
+            b.setStyleSheet(self._BTN)
             b.clicked.connect(slot)
-            top_lay.addWidget(b)
+            lay.addWidget(b)
 
+        # 关闭
         close = QPushButton('✕')
         close.setFixedSize(22, 22)
         close.setCursor(Qt.CursorShape.PointingHandCursor)
         close.setStyleSheet(f"""
             QPushButton {{
                 background: transparent; color: {C['fg_dim']};
-                border: none; font-size: 12px;
+                border: none; font-size: 11px;
             }}
             QPushButton:hover {{ color: #ff6b6b; }}
         """)
         close.clicked.connect(self.closed.emit)
-        top_lay.addWidget(close)
-        root.addWidget(top)
-
-        # ── 结果列表 ──────────────────────────────────
-        self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._scroll.setMaximumHeight(520)
-        self._scroll.setStyleSheet(f"""
-            QScrollArea {{ background: transparent; border: none; }}
-            QScrollBar:vertical {{ background: transparent; width: 3px; }}
-            QScrollBar::handle:vertical {{ background: #444448; border-radius: 1px; }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
-        """)
-        self._list_w = QWidget()
-        self._list_w.setStyleSheet("background: transparent;")
-        self._list_lay = QVBoxLayout(self._list_w)
-        self._list_lay.setContentsMargins(6, 4, 6, 6)
-        self._list_lay.setSpacing(2)
-        self._list_lay.addStretch()
-        self._scroll.setWidget(self._list_w)
-        root.addWidget(self._scroll)
+        lay.addWidget(close)
 
         self._matches: list[int] = []
         self._cur_idx = -1
         self.hide()
 
-    def _on_text(self, text: str):
-        # 通知主窗口搜索（延迟防抖）
-        if not hasattr(self, '_debounce'):
-            self._debounce = QTimer(self)
-            self._debounce.setSingleShot(True)
-            self._debounce.timeout.connect(self._emit_search)
-        self._debounce.start(200)
+    def _on_text(self, _: str):
+        if not hasattr(self, '_db'):
+            self._db = QTimer(self)
+            self._db.setSingleShot(True)
+            self._db.timeout.connect(self._emit_search)
+        self._db.start(180)
 
     def _emit_search(self):
-        text = self._input.text()
-        # 触发外部搜索，结果通过 set_matches 回填
-        self.parent() and self.parent().window()._do_search(text)
+        win = self.parent().window() if self.parent() else None
+        if win and hasattr(win, '_do_search'):
+            win._do_search(self._input.text(), self._case_btn.isChecked())
 
-    def set_matches(self, matches: list[int], doc, kw: str):
-        """由主窗口回填匹配位置列表"""
+    def set_matches(self, matches: list[int], total_len: int):
         self._matches = matches
         self._cur_idx = 0 if matches else -1
-        self._kw = kw
-        self._doc = doc
-        self._count_lbl.setText(f'{len(matches)}' if matches else '0')
-        self._rebuild_list(doc, kw)
-        self.adjustSize()
+        self._update_count()
 
-    def _rebuild_list(self, doc, kw: str):
-        while self._list_lay.count() > 1:
-            item = self._list_lay.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        if not kw or not self._matches:
-            return
-        for i, pos in enumerate(self._matches):
-            row = self._make_row(i, pos, doc, kw)
-            self._list_lay.insertWidget(self._list_lay.count() - 1, row)
-
-    def _make_row(self, idx: int, pos: int, doc, kw: str) -> QFrame:
-        # 取关键词前后各 40 字的上下文
-        full = doc.toPlainText()
-        s = max(0, pos - 40)
-        e = min(len(full), pos + len(kw) + 60)
-        snippet = ('…' if s > 0 else '') + full[s:e].replace('\n', ' ')
-        line = snippet
-        # 高亮 kw
-        lo = line.lower().find(kw.lower())
-        if lo >= 0:
-            esc_pre = line[:lo].replace('<', '&lt;')
-            esc_mid = line[lo:lo+len(kw)].replace('<', '&lt;')
-            esc_aft = line[lo+len(kw):].replace('<', '&lt;')
-            line = (esc_pre
-                    + f'<span style="color:{C["accent"]};font-weight:bold">'
-                    + esc_mid + '</span>' + esc_aft)
-
-        row = QFrame()
-        row.setCursor(Qt.CursorShape.PointingHandCursor)
-        row.setStyleSheet(f"""
-            QFrame {{ background: transparent; border-radius: 5px; }}
-            QFrame:hover {{ background: {C['bg_sel']}; }}
-        """)
-        lay = QHBoxLayout(row)
-        lay.setContentsMargins(8, 5, 8, 5)
-        lay.setSpacing(6)
-
-        num = QLabel(f'{idx+1}')
-        num.setFixedWidth(22)
-        num.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        num.setStyleSheet(f"color: {C['fg_dim']}; font-size: 11px;")
-        lay.addWidget(num)
-
-        lbl = QLabel(line)
-        lbl.setTextFormat(Qt.TextFormat.RichText)
-        lbl.setStyleSheet(f"color: {C['fg_file']}; font-size: 12px;")
-        lbl.setWordWrap(True)
-        lay.addWidget(lbl, 1)
-
-        def _click(e, i=idx):
-            if e.button() == Qt.MouseButton.LeftButton:
-                self._cur_idx = i
-                self.jump_to.emit(i)
-        row.mousePressEvent = _click
-        return row
+    def _update_count(self):
+        n = len(self._matches)
+        if n == 0:
+            self._count_lbl.setText('无结果')
+        elif self._cur_idx >= 0:
+            self._count_lbl.setText(f'{self._cur_idx + 1} / {n}')
+        else:
+            self._count_lbl.setText(f'{n}')
 
     def _prev(self):
         if self._matches:
             self._cur_idx = (self._cur_idx - 1) % len(self._matches)
+            self._update_count()
             self.jump_to.emit(self._cur_idx)
 
     def _next(self):
         if self._matches:
             self._cur_idx = (self._cur_idx + 1) % len(self._matches)
+            self._update_count()
             self.jump_to.emit(self._cur_idx)
 
     def focus(self):
         self._input.setFocus()
         self._input.selectAll()
 
+    def is_case_sensitive(self) -> bool:
+        return self._case_btn.isChecked()
+
     def current_keyword(self) -> str:
         return self._input.text()
 
-    # 支持旧代码中对 set_count 的调用
+    # 兼容旧调用
     def set_count(self, n: int):
-        self._count_lbl.setText(str(n) if n else '')
+        if n == 0:
+            self._count_lbl.setText('无结果' if self._input.text() else '')
+        else:
+            self._count_lbl.setText(str(n))
 
 
 # ── 全局搜索窗口 ──────────────────────────────────────────────────────────
@@ -2556,35 +2500,39 @@ class MainWindow(QMainWindow):
         if self._stack.currentWidget() == self._txt_editor:
             self._txt_editor.setFocus()
 
-    def _do_search(self, kw: str):
+    def _do_search(self, kw: str, case_sensitive: bool = False):
         self._clear_search_hl()
         if not kw or self._stack.currentWidget() != self._txt_editor:
             self._search_bar.set_count(0)
             return
-        doc = self._txt_editor.document()
+        doc  = self._txt_editor.document()
+        full = doc.toPlainText()
+        needle   = kw if case_sensitive else kw.lower()
+        haystack = full if case_sensitive else full.lower()
+
         fmt_all = QTextCharFormat()
         fmt_all.setBackground(QColor('#2a2400'))
         fmt_all.setForeground(QColor('#c8a850'))
-        fmt_cur = QTextCharFormat()
-        fmt_cur.setBackground(QColor('#3a2e00'))
-        fmt_cur.setForeground(QColor('#e8c870'))
 
-        cursor = QTextCursor(doc)
         self._search_matches = []
         selections = []
+        start = 0
         while True:
-            cursor = doc.find(kw, cursor)
-            if cursor.isNull():
+            idx = haystack.find(needle, start)
+            if idx < 0:
                 break
+            self._search_matches.append(idx)
             sel = QTextEdit.ExtraSelection()
-            sel.cursor = QTextCursor(cursor)
+            c = QTextCursor(doc)
+            c.setPosition(idx)
+            c.setPosition(idx + len(kw), QTextCursor.MoveMode.KeepAnchor)
+            sel.cursor = c
             sel.format = fmt_all
             selections.append(sel)
-            self._search_matches.append(cursor.position() - len(kw))
+            start = idx + 1
 
         self._txt_editor.setExtraSelections(selections)
-        self._search_bar.set_matches(self._search_matches, doc, kw)
-        # 高亮第一条
+        self._search_bar.set_matches(self._search_matches, len(full))
         if self._search_matches:
             self._jump_to_match(0)
 
@@ -2593,13 +2541,41 @@ class MainWindow(QMainWindow):
             return
         doc = self._txt_editor.document()
         pos = self._search_matches[idx]
+        kw  = self._search_bar.current_keyword()
+
+        # 当前条：更亮
+        fmt_cur = QTextCharFormat()
+        fmt_cur.setBackground(QColor('#3a2e00'))
+        fmt_cur.setForeground(QColor('#f0d070'))
+        fmt_cur.setFontWeight(QFont.Weight.Bold)
+
+        fmt_all = QTextCharFormat()
+        fmt_all.setBackground(QColor('#2a2400'))
+        fmt_all.setForeground(QColor('#c8a850'))
+
+        sels = []
+        for i, p in enumerate(self._search_matches):
+            sel = QTextEdit.ExtraSelection()
+            c = QTextCursor(doc)
+            c.setPosition(p)
+            c.setPosition(p + len(kw), QTextCursor.MoveMode.KeepAnchor)
+            sel.cursor = c
+            sel.format = fmt_cur if i == idx else fmt_all
+            sels.append(sel)
+        self._txt_editor.setExtraSelections(sels)
+
+        # 更新面板计数
+        self._search_bar._cur_idx = idx
+        self._search_bar._update_count()
+
+        # 居中滚动
         c = QTextCursor(doc)
         c.setPosition(pos)
         self._txt_editor.setTextCursor(c)
-        # 当前匹配用更亮的高亮
+        self._txt_editor.ensureCursorVisible()
         rect = self._txt_editor.cursorRect(c)
         vp_h = self._txt_editor.viewport().height()
-        sb = self._txt_editor.verticalScrollBar()
+        sb   = self._txt_editor.verticalScrollBar()
         sb.setValue(sb.value() + rect.center().y() - vp_h // 2)
 
     def _clear_search_hl(self):
