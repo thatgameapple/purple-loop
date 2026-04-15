@@ -1460,10 +1460,10 @@ class GlobalSearchDialog(QDialog):
         self.store    = store
         self._recent: list[str] = store.get_config('recent_searches', [])
         # results: [(fp, full_text, [(pos, match_len), ...]), ...]
-        self._results: list[tuple] = []
-        self._sel_fp   = ''
-        self._sel_hits: list[tuple] = []   # [(pos, match_len), ...]
-        self._sel_idx  = 0
+        self._results: list[tuple] = []      # [(fp, full_text, [(pos,mlen),...]), ...]
+        self._flat_hits: list[tuple] = []   # [(fp, full_text, pos, mlen), ...] 全局扁平列表
+        self._global_idx = 0
+        self._sel_fp = ''
         self.resize(1000, 660)
         self.setMinimumSize(780, 500)
         self.setStyleSheet(self._SS)
@@ -1697,11 +1697,17 @@ class GlobalSearchDialog(QDialog):
             if hits:
                 self._results.append((fp, full, hits))
 
+        # 构建全局扁平命中列表
+        self._flat_hits = []
+        for fp, full, hits in self._results:
+            for pos, mlen in hits:
+                self._flat_hits.append((fp, full, pos, mlen))
+        self._global_idx = 0
         self._render_results(kw)
 
     def _render_results(self, kw: str):
         self._clear_list()
-        total = sum(len(h) for _, _, h in self._results)
+        total = len(self._flat_hits)
         if not self._results:
             self._result_lbl.setText('无结果')
             lbl = QLabel('无匹配结果')
@@ -1716,9 +1722,12 @@ class GlobalSearchDialog(QDialog):
         self._result_lbl.setText(f'{total} 条 · {len(self._results)} 文件')
 
         case_sensitive = self._case_btn.isChecked()
+        flat_offset = 0   # 当前文件在全局列表中的起始偏移
 
         for fp, full, hits in self._results:
-            # 文件标题行（可点击，跳转到第一条）
+            file_start = flat_offset   # 该文件第一条的全局编号
+
+            # 文件标题行
             hdr = QFrame()
             hdr.setCursor(Qt.CursorShape.PointingHandCursor)
             hdr.setStyleSheet(f"""
@@ -1736,35 +1745,35 @@ class GlobalSearchDialog(QDialog):
                 f"padding: 1px 6px; font-size: 11px;")
             hdr_lay.addWidget(cnt_lbl)
             hdr_lay.addStretch()
-            def _hdr_click(e, f=fp, ft=full, h=hits):
+            def _hdr_click(e, gi=file_start):
                 if e.button() == Qt.MouseButton.LeftButton:
-                    self._show_preview(f, ft, h, 0)
+                    self._jump_to_global(gi)
             hdr.mousePressEvent = _hdr_click
             self._list_vlay.insertWidget(self._list_vlay.count()-1, hdr)
 
-            # 每条命中：简短上下文（前后 ~50 字）
+            # 每条命中
             for i, (pos, mlen) in enumerate(hits):
-                row = self._make_hit_row(fp, full, hits, i, kw, case_sensitive)
+                global_i = flat_offset + i
+                row = self._make_hit_row(full, pos, mlen, global_i, kw, case_sensitive)
                 self._list_vlay.insertWidget(self._list_vlay.count()-1, row)
 
-        # 自动选中第一个文件第一条
-        if self._results:
-            fp, full, hits = self._results[0]
-            self._show_preview(fp, full, hits, 0)
+            flat_offset += len(hits)
 
-    def _make_hit_row(self, fp: str, full: str, hits: list,
-                      idx: int, kw: str, case_sensitive: bool) -> QFrame:
-        pos, mlen = hits[idx]
+        # 自动跳到第一条
+        if self._flat_hits:
+            self._jump_to_global(0)
+
+    def _make_hit_row(self, full: str, pos: int, mlen: int,
+                      global_i: int, kw: str, case_sensitive: bool) -> QFrame:
         s = max(0, pos - 45)
         e = min(len(full), pos + mlen + 45)
         snippet = ('…' if s > 0 else '') + full[s:e].replace('\n', ' ')
         if e < len(full):
             snippet += '…'
 
-        # 高亮关键词
         needle = kw if case_sensitive else kw.lower()
-        snip_search = snippet if case_sensitive else snippet.lower()
-        lo = snip_search.find(needle)
+        snip_s = snippet if case_sensitive else snippet.lower()
+        lo = snip_s.find(needle)
         if lo >= 0:
             esc_pre = snippet[:lo].replace('<', '&lt;')
             esc_mid = snippet[lo:lo+mlen].replace('<', '&lt;')
@@ -1790,58 +1799,62 @@ class GlobalSearchDialog(QDialog):
         lbl.setWordWrap(False)
         lay.addWidget(lbl, 1)
 
-        def _click(e, f=fp, ft=full, h=hits, i=idx):
+        def _click(e, gi=global_i):
             if e.button() == Qt.MouseButton.LeftButton:
-                self._show_preview(f, ft, h, i)
+                self._jump_to_global(gi)
         row.mousePressEvent = _click
         return row
 
-    def _show_preview(self, fp: str, full: str, hits: list, idx: int):
-        """右侧加载完整文件，用 ExtraSelections 高亮所有命中，滚动到选中项"""
-        self._sel_fp   = fp
-        self._sel_hits = hits
-        self._sel_idx  = idx
+    def _jump_to_global(self, idx: int):
+        """跳转到全局第 idx 条命中（跨文件统一计数）"""
+        if not self._flat_hits or not (0 <= idx < len(self._flat_hits)):
+            return
+        fp, full, pos, mlen = self._flat_hits[idx]
+        self._global_idx = idx
+        self._sel_fp = fp
 
+        total = len(self._flat_hits)
+        self._hit_lbl.setText(f'{idx + 1} / {total}')
         self._preview_file_lbl.setText(Path(fp).stem)
         self._file_lbl.setText(Path(fp).stem)
-        self._hit_lbl.setText(f'{idx+1} / {len(hits)}')
 
-        # 仅当文件切换时才重新 setPlainText（避免闪烁）
+        # 收集该文件所有命中（用于 ExtraSelections）
+        file_hits = [(p, m) for f, _, p, m in self._flat_hits if f == fp]
+        cur_local = next(i for i, (p, m) in enumerate(file_hits)
+                         if p == pos and m == mlen)
+
+        # 文件切换时重新加载（避免重复 setPlainText 闪烁）
         if self._preview.toPlainText() != full:
             self._preview.setPlainText(full)
-            # 行间距
             from PyQt6.QtGui import QTextBlockFormat
-            cur = QTextCursor(self._preview.document())
-            cur.select(QTextCursor.SelectionType.Document)
+            c = QTextCursor(self._preview.document())
+            c.select(QTextCursor.SelectionType.Document)
             blk = QTextBlockFormat()
             blk.setLineHeight(160, 1)
-            cur.setBlockFormat(blk)
+            c.setBlockFormat(blk)
 
-        # 所有命中：暗黄高亮
         fmt_all = QTextCharFormat()
         fmt_all.setBackground(QColor('#2a2400'))
         fmt_all.setForeground(QColor('#c8a850'))
-        # 当前命中：亮黄高亮
         fmt_cur = QTextCharFormat()
         fmt_cur.setBackground(QColor('#3a2e00'))
         fmt_cur.setForeground(QColor('#f0d070'))
         fmt_cur.setFontWeight(QFont.Weight.Bold)
 
         sels = []
-        for i, (pos, mlen) in enumerate(hits):
+        for i, (p2, m2) in enumerate(file_hits):
             sel = QTextEdit.ExtraSelection()
-            cur = QTextCursor(self._preview.document())
-            cur.setPosition(pos)
-            cur.setPosition(pos + mlen, QTextCursor.MoveMode.KeepAnchor)
-            sel.cursor = cur
-            sel.format = fmt_cur if i == idx else fmt_all
+            c = QTextCursor(self._preview.document())
+            c.setPosition(p2)
+            c.setPosition(p2 + m2, QTextCursor.MoveMode.KeepAnchor)
+            sel.cursor = c
+            sel.format = fmt_cur if i == cur_local else fmt_all
             sels.append(sel)
         self._preview.setExtraSelections(sels)
 
-        # 滚动到当前命中居中
-        pos_cur = hits[idx][0]
+        # 滚动居中
         c = QTextCursor(self._preview.document())
-        c.setPosition(pos_cur)
+        c.setPosition(pos)
         self._preview.setTextCursor(c)
         self._preview.ensureCursorVisible()
         rect = self._preview.cursorRect(c)
@@ -1850,18 +1863,12 @@ class GlobalSearchDialog(QDialog):
         sb.setValue(sb.value() + rect.center().y() - vp_h // 2)
 
     def _prev_hit(self):
-        if self._sel_hits:
-            self._sel_idx = (self._sel_idx - 1) % len(self._sel_hits)
-            self._show_preview(self._sel_fp,
-                               self._preview.toPlainText(),
-                               self._sel_hits, self._sel_idx)
+        if self._flat_hits:
+            self._jump_to_global((self._global_idx - 1) % len(self._flat_hits))
 
     def _next_hit(self):
-        if self._sel_hits:
-            self._sel_idx = (self._sel_idx + 1) % len(self._sel_hits)
-            self._show_preview(self._sel_fp,
-                               self._preview.toPlainText(),
-                               self._sel_hits, self._sel_idx)
+        if self._flat_hits:
+            self._jump_to_global((self._global_idx + 1) % len(self._flat_hits))
 
     def _open_selected(self):
         if self._sel_fp:
@@ -1871,6 +1878,8 @@ class GlobalSearchDialog(QDialog):
     def _show_recent(self):
         self._clear_list()
         self._result_lbl.setText('')
+        self._flat_hits = []
+        self._global_idx = 0
         self._preview.clear()
         self._preview_file_lbl.setText('选择左侧结果查看全文')
         self._hit_lbl.setText('')
