@@ -1664,8 +1664,11 @@ class GlobalSearchDialog(QDialog):
         needle = kw if case_sensitive else kw.lower()
 
         for fp in self.store.get_txt_files():
-            if tag_filter and tag_filter not in TagScanner.scan(fp):
-                continue
+            if tag_filter:
+                scanned = TagScanner.scan(fp)
+                # 支持父标签匹配：文件里写了 #父/子/孙 也算属于 #父
+                if not any(t == tag_filter or t.startswith(tag_filter + '/') for t in scanned):
+                    continue
             if annot_filter and not self.store.get_annotations(fp):
                 continue
             try:
