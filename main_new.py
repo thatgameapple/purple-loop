@@ -2236,6 +2236,31 @@ class HelpDialog(QDialog):
         subtitle('选中 5 个字以上，松开鼠标，浮动工具条自动弹出。选择颜色即完成标注，无需额外操作。')
         sep()
 
+        # # 自由备注（重点功能）
+        note_box = QWidget()
+        note_box.setStyleSheet(
+            f'background: {C["bg_sel"]}; border: 1px solid {C["accent"]}; '
+            f'border-radius: 8px; margin-bottom: 10px;'
+        )
+        nb = QVBoxLayout(note_box)
+        nb.setContentsMargins(16, 12, 16, 12)
+        nb.setSpacing(5)
+        nb_title = QLabel('# 自由备注标签　←　最核心的功能')
+        nb_title.setStyleSheet(f'color: {C["accent"]}; font-size: 14px; font-weight: bold;')
+        nb.addWidget(nb_title)
+        nb_desc = QLabel(
+            '选中任意文字后，点击浮动工具条里的 # 按钮，选一个底色，再输入你自己的备注文字，回车确认。\n\n'
+            '备注会显示在右侧标注面板，格式为  # 你写的内容 ，点击可跳转到原文位置。\n\n'
+            '适合场景：\n'
+            '・「这段可以剪掉」「嘉宾最强观点」「需要加 B-roll」\n'
+            '・「第二集用」「和第3分钟那句呼应」「语速太快需要处理」\n'
+            '・任何你想记录的导演/剪辑思路，直接写在原文上，不影响文字本身。'
+        )
+        nb_desc.setStyleSheet(f'color: {C["fg_tag"]}; font-size: 12px; line-height: 1.6;')
+        nb_desc.setWordWrap(True)
+        nb.addWidget(nb_desc)
+        lay.addWidget(note_box)
+
         annot_rows = [
             ('#e8c870', '黄色高亮', '核心观点 / 关键结论',
              '适合标记嘉宾的核心论断、精华金句，剪辑时优先保留。'),
