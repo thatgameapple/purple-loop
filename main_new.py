@@ -596,17 +596,70 @@ class NoteBar(QFrame):
         self.hide()
 
 
-# ── #标签语法高亮 ─────────────────────────────────────────────────────────
+# ── 统一高亮器（#标签 + 标注颜色）────────────────────────────────────────
+# 使用 QSyntaxHighlighter.setFormat()，仅在绘制时着色，完全不写入文档，
+# 不触发 contentsChange，不会污染偏移量追踪，是 Qt6 官方推荐方案。
 
-class TagHighlighter(QSyntaxHighlighter):
-    def __init__(self, doc):
+class DocHighlighter(QSyntaxHighlighter):
+    """统一处理 #标签高亮 + 标注颜色，非破坏性渲染"""
+
+    def __init__(self, doc, store: 'FileStore'):
         super().__init__(doc)
-        self._fmt = QTextCharFormat()
-        self._fmt.setForeground(QColor(C['accent']))
+        self.store  = store
+        self._fp: str | None = None
+        self._tag_fmt = QTextCharFormat()
+        self._tag_fmt.setForeground(QColor(C['accent']))
+
+    def set_file(self, filepath: str | None):
+        self._fp = filepath
+        self.rehighlight()
+
+    def _annot_fmt(self, annot: dict) -> QTextCharFormat:
+        atype = annot['type']
+        fmt = QTextCharFormat()
+        if atype == 'label':
+            fmt.setBackground(QColor('#1e1040'))
+            fmt.setForeground(QColor('#c4b0f8'))
+            fmt.setFontUnderline(True)
+        else:
+            bg, fg = C.get(atype, (None, None))
+            if bg:
+                fmt.setBackground(QColor(bg))
+            if fg and atype not in ('bold', 'underline'):
+                fmt.setForeground(QColor(fg))
+            if atype == 'bold':
+                fmt.setFontWeight(QFont.Weight.Bold)
+            if atype == 'underline':
+                fmt.setFontUnderline(True)
+            if annot.get('label_text'):
+                fmt.setFontUnderline(True)
+        return fmt
 
     def highlightBlock(self, text: str):
+        # 1. #标签高亮
         for m in TAG_RE.finditer(text):
-            self.setFormat(m.start(), m.end() - m.start(), self._fmt)
+            self.setFormat(m.start(), m.end() - m.start(), self._tag_fmt)
+
+        # 2. 标注高亮
+        if not self._fp:
+            return
+        block       = self.currentBlock()
+        block_start = block.position()
+        block_len   = len(text)
+
+        for annot in self.store.get_annotations(self._fp):
+            a_s = annot['start']
+            a_e = annot['end']
+            if a_s >= a_e:
+                continue
+            # 不与本块重叠
+            if a_e <= block_start or a_s >= block_start + block_len:
+                continue
+            lo = max(0, a_s - block_start)
+            hi = min(block_len, a_e - block_start)
+            if lo >= hi:
+                continue
+            self.setFormat(lo, hi - lo, self._annot_fmt(annot))
 
 
 # ── txt 编辑器 ───────────────────────────────────────────────────────────
@@ -619,7 +672,7 @@ class TxtEditor(QTextEdit):
         self.store    = store
         self._fp: str | None = None
         self._loading = False
-        self._highlighter = TagHighlighter(self.document())
+        self._highlighter = DocHighlighter(self.document(), store)
 
         # 字体
         self._set_font()
@@ -711,9 +764,10 @@ class TxtEditor(QTextEdit):
         self._loading = True
         text = Path(path).read_text('utf-8')
         self.setPlainText(text)
-        self._apply_line_spacing()   # setPlainText 会重置 block format；保持在 _loading=True 内
+        self._apply_line_spacing()   # setPlainText 会重置 block format
         self._loading = False
-        self._apply_annotations()
+        # 通知高亮器切换文件（会自动 rehighlight，不写入文档）
+        self._highlighter.set_file(path)
 
         # 恢复阅读位置（延迟到布局完成后）
         saved_pos = self.store.get_read_pos(path)
@@ -727,68 +781,8 @@ class TxtEditor(QTextEdit):
 
 
     def _apply_annotations(self):
-        if not self._fp:
-            return
-        # 彻底清除：用内存文本重置文档（唯一可靠清除所有字符格式的方式）
-        cur_pos   = self.textCursor().position()
-        scroll    = self.verticalScrollBar().value()
-        # _loading=True 覆盖整个过程：
-        # setPlainText / setBlockFormat / setCharFormat 都会触发 contentsChange，
-        # 必须全程屏蔽，否则 _on_change 会误更新偏移量
-        self._loading = True
-        self.setPlainText(self.toPlainText())   # 读内存，不丢未保存内容
-        self._apply_line_spacing()
-        self.setExtraSelections([])
-        # 恢复光标和滚动
-        c = self.textCursor()
-        c.setPosition(min(cur_pos, self.document().characterCount() - 1))
-        self.setTextCursor(c)
-        self.verticalScrollBar().setValue(scroll)
-        # 应用标注
-        for a in self.store.get_annotations(self._fp):
-            self._apply_fmt(a)
-        self._loading = False   # 全部完成后再解锁
-
-    def _apply_fmt(self, annot: dict):
-        doc = self.document()
-        start = annot['start']
-        end   = annot['end']
-        # 防止无效标注（start >= end 或覆盖全文）
-        if start >= end:
-            return
-        char_count = doc.characterCount()
-        if char_count > 20 and (end - start) >= char_count - 1:
-            return   # 跳过覆盖全文的异常标注
-        clamped_start = min(start, char_count - 1)
-        clamped_end   = min(end,   char_count - 1)
-        if clamped_start >= clamped_end:
-            return   # 夹取后选区为空，跳过
-        cur = QTextCursor(doc)
-        cur.setPosition(clamped_start)
-        cur.setPosition(clamped_end, QTextCursor.MoveMode.KeepAnchor)
-        fmt = QTextCharFormat()
-        fmt.setFont(self.font())
-        fmt.setForeground(QColor(C['fg']))
-        atype = annot['type']
-        # 兼容旧 label 类型
-        if atype == 'label':
-            fmt.setBackground(QColor('#1e1040'))
-            fmt.setForeground(QColor('#c4b0f8'))
-            fmt.setFontUnderline(True)
-        else:
-            bg, fg = C.get(atype, (None, None))
-            if bg:
-                fmt.setBackground(QColor(bg))
-            if fg and atype not in ('bold', 'underline'):
-                fmt.setForeground(QColor(fg))
-            if atype == 'bold':
-                fmt.setFontWeight(QFont.Weight.Bold)
-            if atype == 'underline':
-                fmt.setFontUnderline(True)
-            # 有标签名时加下划线以区分普通高亮
-            if annot.get('label_text'):
-                fmt.setFontUnderline(True)
-        cur.setCharFormat(fmt)
+        """标注变更后触发重绘（高亮器不写入文档，直接 rehighlight 即可）"""
+        self._highlighter.rehighlight()
 
     def annotate(self, atype: str, label_text: str = '') -> dict | None:
         if not self._fp:
@@ -801,7 +795,7 @@ class TxtEditor(QTextEdit):
         text  = cur.selectedText().replace('\u2029', '\n')
         extra = {'label_text': label_text} if label_text else {}
         annot = self.store.add_annotation(self._fp, atype, start, end, text, **extra)
-        self._apply_fmt(annot)
+        self._highlighter.rehighlight()
         return annot
 
     def remove_at_cursor(self):
