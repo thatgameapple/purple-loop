@@ -1171,7 +1171,8 @@ class MainWindow(QMainWindow):
         self._annot_panel.setMinimumWidth(160)
         self._annot_panel.setMaximumWidth(300)
         self._content_split.addWidget(self._annot_panel)
-        self._content_split.setSizes([900, 220])
+        self._content_split.setSizes([1120, 0])
+        self._annot_panel.hide()   # 默认隐藏
 
         right_lay.addWidget(self._content_split, 1)
         self._split.addWidget(right_wrap)
@@ -1244,6 +1245,14 @@ class MainWindow(QMainWindow):
         vm = mb.addMenu('视图')
         vm.setStyleSheet(_ms)
         _act(vm, '搜索', self._toggle_search, 'Ctrl+F')
+        vm.addSeparator()
+        self._annot_panel_action = QAction('显示标注面板', self)
+        self._annot_panel_action.setShortcut(QKeySequence('Ctrl+\\'))
+        self._annot_panel_action.setCheckable(True)
+        self._annot_panel_action.setChecked(False)
+        self._annot_panel_action.triggered.connect(self._toggle_annot_panel)
+        vm.addAction(self._annot_panel_action)
+        vm.addSeparator()
         _act(vm, '刷新侧栏', self._refresh_sidebar, 'F5')
 
     def _apply_theme(self):
@@ -1439,6 +1448,16 @@ class MainWindow(QMainWindow):
             if a['id'] == annot_id:
                 self._note_bar.show_for(a, self._fp)
                 break
+
+    def _toggle_annot_panel(self):
+        visible = self._annot_panel_action.isChecked()
+        if visible:
+            self._annot_panel.show()
+            self._content_split.setSizes([900, 220])
+            self._annot_panel.refresh(self._fp)
+        else:
+            self._annot_panel.hide()
+            self._content_split.setSizes([1120, 0])
 
     # ── 搜索 ──────────────────────────────────────────────────
     def _toggle_search(self):
