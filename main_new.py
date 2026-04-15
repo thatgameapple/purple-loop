@@ -682,7 +682,9 @@ class TxtEditor(QTextEdit):
     def _apply_annotations(self):
         if not self._fp:
             return
-        # 先清除所有格式（必须显式设置 bg/fg，否则 Qt 不保证清掉残留色）
+        # 清除搜索高亮（ExtraSelections 层，不进文档）
+        self.setExtraSelections([])
+        # 清除所有字符格式（显式设 bg/fg 保证覆盖残留）
         clear_fmt = QTextCharFormat()
         clear_fmt.setBackground(QColor(C['bg']))
         clear_fmt.setForeground(QColor(C['fg']))
@@ -1676,21 +1678,27 @@ class MainWindow(QMainWindow):
         if not kw or self._stack.currentWidget() != self._txt_editor:
             self._search_bar.set_count(0)
             return
-        doc  = self._txt_editor.document()
-        fmt  = QTextCharFormat()
+        doc = self._txt_editor.document()
+        fmt = QTextCharFormat()
         fmt.setBackground(QColor('#3a2e00'))
         fmt.setForeground(QColor('#e8c870'))
 
         cursor = QTextCursor(doc)
         self._search_matches = []
+        selections = []
         while True:
             cursor = doc.find(kw, cursor,
                               QTextDocument.FindFlag.FindCaseSensitively)
             if cursor.isNull():
                 break
-            cursor.mergeCharFormat(fmt)
+            sel = QTextEdit.ExtraSelection()
+            sel.cursor = QTextCursor(cursor)
+            sel.format = fmt
+            selections.append(sel)
             self._search_matches.append(cursor.position() - len(kw))
 
+        # ExtraSelections 不写入文档，setExtraSelections([]) 即可完全清除
+        self._txt_editor.setExtraSelections(selections)
         self._search_bar.set_count(len(self._search_matches))
         if self._search_matches:
             c = QTextCursor(doc)
@@ -1699,8 +1707,7 @@ class MainWindow(QMainWindow):
             self._txt_editor.ensureCursorVisible()
 
     def _clear_search_hl(self):
-        if self._fp:
-            self._txt_editor._apply_annotations()
+        self._txt_editor.setExtraSelections([])
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
