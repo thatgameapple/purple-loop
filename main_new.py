@@ -9,7 +9,8 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QSplitter, QTreeWidget, QTreeWidgetItem,
     QStackedWidget, QTextEdit, QScrollArea, QLabel, QVBoxLayout, QHBoxLayout,
     QPushButton, QLineEdit, QFrame, QMenu, QFileDialog, QInputDialog,
-    QMessageBox, QSizePolicy, QAbstractScrollArea, QDialog, QButtonGroup
+    QMessageBox, QSizePolicy, QAbstractScrollArea, QDialog, QButtonGroup,
+    QProgressBar
 )
 from PyQt6.QtGui import (
     QColor, QFont, QTextCharFormat, QTextCursor, QTextDocument,
