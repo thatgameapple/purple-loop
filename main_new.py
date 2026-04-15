@@ -45,6 +45,46 @@ _FILLER_PARTS = [
 # 构建正则：先匹配长词，词间不加边界（中文无空格边界）
 FILLER_RE = re.compile('(' + '|'.join(re.escape(w) for w in _FILLER_PARTS) + ')')
 
+# ── 话语标记词（Discourse Markers）──────────────────────────────────────────
+# 按功能分4类，各类对应不同颜色高亮
+_DM_CAUSAL = [
+    # 因果类（表原因/结果）
+    '正因为如此', '也正因为', '因此可见', '由此可见',
+    '所以说', '因为', '由于', '既然', '因此', '所以', '以致于', '以致',
+    '结果', '原来',
+]
+_DM_CONTRAST = [
+    # 转折/对比类
+    '虽然如此', '尽管如此', '即便如此',
+    '虽然', '尽管', '但是', '然而', '不过', '可是', '却', '反而',
+    '与此相反', '相反',
+]
+_DM_PROGRESSIVE = [
+    # 递进/举例类
+    '不仅如此', '与此同时', '除此之外',
+    '不仅', '不但', '而且', '并且', '同时', '甚至', '何况',
+    '比如说', '举例来说', '例如', '比如', '譬如', '像',
+    '也就是说', '换句话说', '换言之', '即',
+    '还有', '另外', '此外',
+]
+_DM_STRUCTURE = [
+    # 总结/衔接/话题类
+    '综上所述', '总的来说', '总的来看', '概括来说',
+    '总之', '总而言之', '一句话',
+    '首先', '其次', '再次', '最后', '第一', '第二', '第三',
+    '接下来', '随后', '之后', '然后',
+    '那么', '关于', '至于', '说到', '说起',
+    '总结一下', '回到', '继续',
+]
+
+def _build_dm_re(words: list) -> re.Pattern:
+    return re.compile('(' + '|'.join(re.escape(w) for w in words) + ')')
+
+DM_RE_CAUSAL      = _build_dm_re(_DM_CAUSAL)
+DM_RE_CONTRAST    = _build_dm_re(_DM_CONTRAST)
+DM_RE_PROGRESSIVE = _build_dm_re(_DM_PROGRESSIVE)
+DM_RE_STRUCTURE   = _build_dm_re(_DM_STRUCTURE)
+
 # 字体目录
 _APP_DIR  = Path(__file__).parent
 FONTS_DIR = _APP_DIR / 'fonts'
@@ -625,11 +665,21 @@ class DocHighlighter(QSyntaxHighlighter):
         self.store  = store
         self._fp: str | None = None
         self._show_fillers = False
+        self._show_dm      = False
         self._tag_fmt = QTextCharFormat()
         self._tag_fmt.setForeground(QColor(C['accent']))
-        # 语气词格式：低调暖色，只改字色，不加底色，不影响阅读
+        # 语气词格式：低调暖色
         self._filler_fmt = QTextCharFormat()
         self._filler_fmt.setForeground(QColor('#a07848'))   # 哑金色
+        # 话语标记词格式：4种颜色
+        self._dm_causal_fmt = QTextCharFormat()
+        self._dm_causal_fmt.setForeground(QColor('#c47a3a'))      # 橙：因果
+        self._dm_contrast_fmt = QTextCharFormat()
+        self._dm_contrast_fmt.setForeground(QColor('#5a9ac4'))    # 蓝：转折
+        self._dm_progressive_fmt = QTextCharFormat()
+        self._dm_progressive_fmt.setForeground(QColor('#5aab7a'))  # 绿：递进/举例
+        self._dm_structure_fmt = QTextCharFormat()
+        self._dm_structure_fmt.setForeground(QColor('#9e8cc0'))   # 淡紫：结构/总结
 
     def set_file(self, filepath: str | None):
         self._fp = filepath
@@ -637,6 +687,10 @@ class DocHighlighter(QSyntaxHighlighter):
 
     def set_show_fillers(self, enabled: bool):
         self._show_fillers = enabled
+        self.rehighlight()
+
+    def set_show_dm(self, enabled: bool):
+        self._show_dm = enabled
         self.rehighlight()
 
     def _annot_fmt(self, annot: dict) -> QTextCharFormat:
@@ -686,10 +740,21 @@ class DocHighlighter(QSyntaxHighlighter):
                 continue
             self.setFormat(lo, hi - lo, self._annot_fmt(annot))
 
-        # 3. 语气词高亮（最后叠加，不覆盖标注颜色）
+        # 3. 语气词高亮
         if self._show_fillers:
             for m in FILLER_RE.finditer(text):
                 self.setFormat(m.start(), m.end() - m.start(), self._filler_fmt)
+
+        # 4. 话语标记词高亮（因果/转折/递进/结构 各色）
+        if self._show_dm:
+            for pat, fmt in (
+                (DM_RE_CAUSAL,      self._dm_causal_fmt),
+                (DM_RE_CONTRAST,    self._dm_contrast_fmt),
+                (DM_RE_PROGRESSIVE, self._dm_progressive_fmt),
+                (DM_RE_STRUCTURE,   self._dm_structure_fmt),
+            ):
+                for m in pat.finditer(text):
+                    self.setFormat(m.start(), m.end() - m.start(), fmt)
 
 
 # ── txt 编辑器 ───────────────────────────────────────────────────────────
@@ -2481,6 +2546,11 @@ class MainWindow(QMainWindow):
         self._filler_action.setChecked(False)
         self._filler_action.triggered.connect(self._toggle_fillers)
         vm.addAction(self._filler_action)
+        self._dm_action = QAction('话语标记词高亮', self)
+        self._dm_action.setCheckable(True)
+        self._dm_action.setChecked(False)
+        self._dm_action.triggered.connect(self._toggle_dm)
+        vm.addAction(self._dm_action)
         _act(vm, '口头禅频率分析…', self._open_filler_analysis)
         vm.addSeparator()
         _act(vm, '刷新侧栏', self._refresh_sidebar, 'F5')
@@ -2541,6 +2611,10 @@ class MainWindow(QMainWindow):
     def _toggle_fillers(self):
         enabled = self._filler_action.isChecked()
         self._txt_editor._highlighter.set_show_fillers(enabled)
+
+    def _toggle_dm(self):
+        enabled = self._dm_action.isChecked()
+        self._txt_editor._highlighter.set_show_dm(enabled)
 
     def _open_filler_analysis(self):
         dlg = FillerAnalysisDialog(self.store, self)
