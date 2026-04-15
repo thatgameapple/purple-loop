@@ -1424,12 +1424,18 @@ class SearchPanel(QFrame):
 # ── 全局搜索窗口 ──────────────────────────────────────────────────────────
 
 class GlobalSearchDialog(QDialog):
-    """全局搜索：左侧结果列表 + 右侧文本预览，可拖拽可缩放"""
+    """全局搜索：左侧结果列表 + 右侧完整文件预览（所有命中全高亮）"""
     open_file = pyqtSignal(str, str)
 
-    _MAX_RECENT  = 8
-    _CTX_CHARS   = 120    # 预览每条前后上下文字符数
-
+    _MAX_RECENT = 8
+    _BTN_SS = f"""
+        QPushButton {{
+            background: {C['bg_sel']}; color: {C['fg_dim']};
+            border: none; border-radius: 5px; padding: 4px 10px; font-size: 12px;
+        }}
+        QPushButton:checked {{ background: {C['accent']}; color: white; }}
+        QPushButton:hover:!checked {{ color: {C['fg']}; }}
+    """
     _SS = f"""
         QDialog {{ background: {C['bg']}; }}
         QScrollBar:vertical {{ background: transparent; width: 3px; }}
@@ -1451,13 +1457,15 @@ class GlobalSearchDialog(QDialog):
     def __init__(self, store: FileStore, parent=None):
         super().__init__(parent)
         self.setWindowTitle('全局搜索')
-        self.store   = store
+        self.store    = store
         self._recent: list[str] = store.get_config('recent_searches', [])
-        self._results: list[tuple] = []   # (fp, all_snippets)
-        self._sel_fp  = ''
-        self._sel_idx = 0
-        self.resize(900, 620)
-        self.setMinimumSize(700, 480)
+        # results: [(fp, full_text, [(pos, match_len), ...]), ...]
+        self._results: list[tuple] = []
+        self._sel_fp   = ''
+        self._sel_hits: list[tuple] = []   # [(pos, match_len), ...]
+        self._sel_idx  = 0
+        self.resize(1000, 660)
+        self.setMinimumSize(780, 500)
         self.setStyleSheet(self._SS)
 
         root = QVBoxLayout(self)
@@ -1474,7 +1482,7 @@ class GlobalSearchDialog(QDialog):
         h_lay.setSpacing(8)
 
         self._input = QLineEdit()
-        self._input.setPlaceholderText('搜索所有文件… (Cmd+K)')
+        self._input.setPlaceholderText('搜索所有文件…')
         self._input.setStyleSheet(f"""
             QLineEdit {{
                 background: {C['bg_input']}; color: {C['fg']};
@@ -1487,27 +1495,34 @@ class GlobalSearchDialog(QDialog):
         self._input.returnPressed.connect(self._run_search)
         h_lay.addWidget(self._input, 1)
 
+        # 大小写精确匹配
+        self._case_btn = QPushButton('Aa')
+        self._case_btn.setCheckable(True)
+        self._case_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._case_btn.setToolTip('区分大小写')
+        self._case_btn.setFixedWidth(36)
+        self._case_btn.setStyleSheet(self._BTN_SS)
+        self._case_btn.clicked.connect(lambda: self._run_search())
+        h_lay.addWidget(self._case_btn)
+
         # 标签筛选
         self._tag_combo = QComboBox()
         self._tag_combo.addItem('全部标签', None)
         self._tag_combo.setFixedWidth(120)
+        self._tag_combo.currentIndexChanged.connect(lambda: self._run_search())
         h_lay.addWidget(self._tag_combo)
 
         # 有标注
         self._annot_btn = QPushButton('有标注')
         self._annot_btn.setCheckable(True)
         self._annot_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._annot_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {C['bg_sel']}; color: {C['fg_dim']};
-                border: none; border-radius: 5px; padding: 5px 10px; font-size: 12px;
-            }}
-            QPushButton:checked {{ background: {C['accent']}; color: white; }}
-        """)
+        self._annot_btn.setStyleSheet(self._BTN_SS)
+        self._annot_btn.clicked.connect(lambda: self._run_search())
         h_lay.addWidget(self._annot_btn)
 
         self._result_lbl = QLabel('')
-        self._result_lbl.setStyleSheet(f"color: {C['fg_dim']}; font-size: 12px; min-width: 60px;")
+        self._result_lbl.setStyleSheet(
+            f"color: {C['fg_dim']}; font-size: 12px; min-width: 80px;")
         h_lay.addWidget(self._result_lbl)
         root.addWidget(header)
 
@@ -1516,7 +1531,7 @@ class GlobalSearchDialog(QDialog):
         body_split.setHandleWidth(1)
         body_split.setStyleSheet(f"QSplitter::handle {{ background: {C['border']}; }}")
 
-        # 左：结果列表
+        # ── 左：结果列表 ──────────────────────────────────────
         left = QWidget()
         left.setStyleSheet(f"background: {C['bg_sidebar']};")
         left_lay = QVBoxLayout(left)
@@ -1538,94 +1553,128 @@ class GlobalSearchDialog(QDialog):
         left_lay.addWidget(self._list_scroll)
         body_split.addWidget(left)
 
-        # 右：预览面板
+        # ── 右：完整文件预览 ──────────────────────────────────
         right = QWidget()
         right.setStyleSheet(f"background: {C['bg']};")
         right_lay = QVBoxLayout(right)
         right_lay.setContentsMargins(0, 0, 0, 0)
         right_lay.setSpacing(0)
 
-        self._preview_header = QLabel('选择左侧结果查看上下文')
-        self._preview_header.setFixedHeight(36)
-        self._preview_header.setContentsMargins(14, 0, 0, 0)
-        self._preview_header.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        self._preview_header.setStyleSheet(
-            f"color: {C['fg_dim']}; font-size: 12px; border-bottom: 1px solid {C['border']};")
-        right_lay.addWidget(self._preview_header)
+        # 右顶栏：文件名 + 命中导航
+        ph = QFrame()
+        ph.setFixedHeight(38)
+        ph.setStyleSheet(
+            f"background: {C['bg_sidebar']}; border-bottom: 1px solid {C['border']};")
+        ph_lay = QHBoxLayout(ph)
+        ph_lay.setContentsMargins(14, 0, 8, 0)
+        ph_lay.setSpacing(6)
+        self._preview_file_lbl = QLabel('选择左侧结果查看全文')
+        self._preview_file_lbl.setStyleSheet(f"color: {C['fg_dim']}; font-size: 12px;")
+        ph_lay.addWidget(self._preview_file_lbl, 1)
+        self._hit_lbl = QLabel('')
+        self._hit_lbl.setStyleSheet(f"color: {C['fg_dim']}; font-size: 11px;")
+        ph_lay.addWidget(self._hit_lbl)
+        for icon, tip, slot in [('↑', '上一条', self._prev_hit), ('↓', '下一条', self._next_hit)]:
+            b = QPushButton(icon)
+            b.setFixedSize(22, 22)
+            b.setToolTip(tip)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setStyleSheet(f"""
+                QPushButton {{
+                    background: {C['bg_sel']}; color: {C['fg']};
+                    border: none; border-radius: 4px; font-size: 13px;
+                }}
+                QPushButton:hover {{ background: {C['accent']}; color: white; }}
+            """)
+            b.clicked.connect(slot)
+            ph_lay.addWidget(b)
+        right_lay.addWidget(ph)
 
         self._preview = QTextEdit()
         self._preview.setReadOnly(True)
+        f = QFont('LXGW WenKai', 16)
+        if not f.exactMatch():
+            f = QFont('PingFang SC', 16)
+        self._preview.setFont(f)
         self._preview.setStyleSheet(f"""
             QTextEdit {{
                 background: {C['bg']}; color: {C['fg']};
-                border: none; padding: 20px 32px;
-                font-family: 'LXGW WenKai'; font-size: 16px;
-                line-height: 1.7;
+                border: none; padding: 24px 40px;
             }}
+            QScrollBar:vertical {{ background: transparent; width: 4px; }}
+            QScrollBar::handle:vertical {{ background: #444448; border-radius: 2px; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
         """)
         right_lay.addWidget(self._preview, 1)
 
-        # 右下：打开按钮
-        preview_foot = QFrame()
-        preview_foot.setFixedHeight(44)
-        preview_foot.setStyleSheet(
+        # 右下：打开文件按钮
+        pf = QFrame()
+        pf.setFixedHeight(44)
+        pf.setStyleSheet(
             f"background: {C['bg_sidebar']}; border-top: 1px solid {C['border']};")
-        pf_lay = QHBoxLayout(preview_foot)
+        pf_lay = QHBoxLayout(pf)
         pf_lay.setContentsMargins(14, 0, 14, 0)
         self._file_lbl = QLabel('')
         self._file_lbl.setStyleSheet(f"color: {C['fg_dim']}; font-size: 12px;")
         pf_lay.addWidget(self._file_lbl, 1)
         open_btn = QPushButton('打开文件 →')
         open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        open_btn.setShortcut(QKeySequence(Qt.Key.Key_Return))
         open_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {C['accent']}; color: white;
-                border: none; border-radius: 5px; padding: 6px 14px; font-size: 13px;
+                border: none; border-radius: 5px; padding: 6px 16px; font-size: 13px;
             }}
             QPushButton:hover {{ background: #6aaaf8; }}
         """)
         open_btn.clicked.connect(self._open_selected)
         pf_lay.addWidget(open_btn)
-        right_lay.addWidget(preview_foot)
+        right_lay.addWidget(pf)
         body_split.addWidget(right)
 
-        body_split.setSizes([280, 620])
+        body_split.setSizes([300, 700])
         body_split.setCollapsible(0, False)
         body_split.setCollapsible(1, False)
-        left.setMinimumWidth(200)
-        right.setMinimumWidth(340)
+        left.setMinimumWidth(220)
+        right.setMinimumWidth(380)
         root.addWidget(body_split, 1)
 
         self._show_recent()
         self._input.setFocus()
 
     def populate_tags(self, tags: list[str]):
+        self._tag_combo.blockSignals(True)
         self._tag_combo.clear()
         self._tag_combo.addItem('全部标签', None)
         for t in sorted(tags):
             self._tag_combo.addItem(f'#{t}', t)
+        self._tag_combo.blockSignals(False)
 
-    def _on_text(self, text: str):
+    def _on_text(self, _text: str):
         if not hasattr(self, '_db'):
             self._db = QTimer(self)
             self._db.setSingleShot(True)
             self._db.timeout.connect(self._run_search)
-        self._db.start(250)
+        self._db.start(260)
 
     def _run_search(self):
         kw = self._input.text().strip()
         if not kw:
             self._show_recent()
             return
+        # 更新历史
         if kw in self._recent:
             self._recent.remove(kw)
         self._recent.insert(0, kw)
         self._recent = self._recent[:self._MAX_RECENT]
         self.store.set_config('recent_searches', self._recent)
 
-        tag_filter   = self._tag_combo.currentData()
-        annot_filter = self._annot_btn.isChecked()
-        self._results = []
+        case_sensitive = self._case_btn.isChecked()
+        tag_filter     = self._tag_combo.currentData()
+        annot_filter   = self._annot_btn.isChecked()
+        self._results  = []
+
+        needle = kw if case_sensitive else kw.lower()
 
         for fp in self.store.get_txt_files():
             if tag_filter and tag_filter not in TagScanner.scan(fp):
@@ -1633,72 +1682,99 @@ class GlobalSearchDialog(QDialog):
             if annot_filter and not self.store.get_annotations(fp):
                 continue
             try:
-                text = Path(fp).read_text('utf-8')
+                full = Path(fp).read_text('utf-8')
             except Exception:
                 continue
-            # 收集所有匹配位置
-            kw_lo = kw.lower()
+            haystack = full if case_sensitive else full.lower()
             hits = []
             start = 0
             while True:
-                idx = text.lower().find(kw_lo, start)
+                idx = haystack.find(needle, start)
                 if idx < 0:
                     break
-                ctx_s = max(0, idx - self._CTX_CHARS)
-                ctx_e = min(len(text), idx + len(kw) + self._CTX_CHARS)
-                snippet = text[ctx_s:ctx_e].replace('\n', ' ')
-                if ctx_s > 0: snippet = '…' + snippet
-                if ctx_e < len(text): snippet += '…'
-                hits.append((idx, snippet))
+                hits.append((idx, len(kw)))
                 start = idx + 1
-                if len(hits) >= 20:
-                    break
             if hits:
-                self._results.append((fp, hits))
+                self._results.append((fp, full, hits))
 
         self._render_results(kw)
 
     def _render_results(self, kw: str):
         self._clear_list()
-        total = sum(len(h) for _, h in self._results)
+        total = sum(len(h) for _, _, h in self._results)
         if not self._results:
             self._result_lbl.setText('无结果')
             lbl = QLabel('无匹配结果')
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet(f"color: {C['fg_dim']}; font-size: 13px; padding: 20px;")
             self._list_vlay.insertWidget(0, lbl)
+            self._preview.clear()
+            self._preview_file_lbl.setText('选择左侧结果查看全文')
+            self._hit_lbl.setText('')
+            self._file_lbl.setText('')
             return
         self._result_lbl.setText(f'{total} 条 · {len(self._results)} 文件')
 
-        for fp, hits in self._results:
-            # 文件标题行
+        case_sensitive = self._case_btn.isChecked()
+
+        for fp, full, hits in self._results:
+            # 文件标题行（可点击，跳转到第一条）
             hdr = QFrame()
-            hdr.setStyleSheet(
-                f"background: {C['bg_input']}; border-bottom: 1px solid {C['border']};")
+            hdr.setCursor(Qt.CursorShape.PointingHandCursor)
+            hdr.setStyleSheet(f"""
+                QFrame {{ background: {C['bg_input']}; border-bottom: 1px solid {C['border']}; }}
+                QFrame:hover {{ background: #2a2d34; }}
+            """)
             hdr_lay = QHBoxLayout(hdr)
-            hdr_lay.setContentsMargins(12, 6, 8, 6)
-            name = QLabel(Path(fp).stem)
-            name.setStyleSheet(f"color: {C['fg']}; font-size: 13px; font-weight: bold;")
-            hdr_lay.addWidget(name)
-            cnt = QLabel(f'{len(hits)}')
-            cnt.setStyleSheet(
+            hdr_lay.setContentsMargins(12, 7, 10, 7)
+            name_lbl = QLabel(Path(fp).stem)
+            name_lbl.setStyleSheet(f"color: {C['fg']}; font-size: 13px; font-weight: bold;")
+            hdr_lay.addWidget(name_lbl)
+            cnt_lbl = QLabel(f'{len(hits)}')
+            cnt_lbl.setStyleSheet(
                 f"background: {C['accent']}; color: white; border-radius: 8px;"
                 f"padding: 1px 6px; font-size: 11px;")
-            hdr_lay.addWidget(cnt)
+            hdr_lay.addWidget(cnt_lbl)
             hdr_lay.addStretch()
+            def _hdr_click(e, f=fp, ft=full, h=hits):
+                if e.button() == Qt.MouseButton.LeftButton:
+                    self._show_preview(f, ft, h, 0)
+            hdr.mousePressEvent = _hdr_click
             self._list_vlay.insertWidget(self._list_vlay.count()-1, hdr)
 
-            # 每条命中
-            for idx, (pos, snippet) in enumerate(hits):
-                row = self._make_hit_row(fp, idx, snippet, kw)
+            # 每条命中：简短上下文（前后 ~50 字）
+            for i, (pos, mlen) in enumerate(hits):
+                row = self._make_hit_row(fp, full, hits, i, kw, case_sensitive)
                 self._list_vlay.insertWidget(self._list_vlay.count()-1, row)
 
-        # 自动选中第一条
+        # 自动选中第一个文件第一条
         if self._results:
-            fp, hits = self._results[0]
-            self._show_preview(fp, hits, kw, 0)
+            fp, full, hits = self._results[0]
+            self._show_preview(fp, full, hits, 0)
 
-    def _make_hit_row(self, fp: str, idx: int, snippet: str, kw: str) -> QFrame:
+    def _make_hit_row(self, fp: str, full: str, hits: list,
+                      idx: int, kw: str, case_sensitive: bool) -> QFrame:
+        pos, mlen = hits[idx]
+        s = max(0, pos - 45)
+        e = min(len(full), pos + mlen + 45)
+        snippet = ('…' if s > 0 else '') + full[s:e].replace('\n', ' ')
+        if e < len(full):
+            snippet += '…'
+
+        # 高亮关键词
+        needle = kw if case_sensitive else kw.lower()
+        snip_search = snippet if case_sensitive else snippet.lower()
+        lo = snip_search.find(needle)
+        if lo >= 0:
+            esc_pre = snippet[:lo].replace('<', '&lt;')
+            esc_mid = snippet[lo:lo+mlen].replace('<', '&lt;')
+            esc_aft = snippet[lo+mlen:].replace('<', '&lt;')
+            rich = (esc_pre
+                    + f'<span style="color:{C["accent"]};font-weight:bold">'
+                    + esc_mid + '</span>' + esc_aft)
+        else:
+            rich = snippet.replace('<', '&lt;')
+
         row = QFrame()
         row.setCursor(Qt.CursorShape.PointingHandCursor)
         row.setStyleSheet(f"""
@@ -1706,54 +1782,86 @@ class GlobalSearchDialog(QDialog):
             QFrame:hover {{ background: {C['bg_sel']}; }}
         """)
         lay = QHBoxLayout(row)
-        lay.setContentsMargins(22, 6, 10, 6)
-        lay.setSpacing(0)
+        lay.setContentsMargins(22, 5, 10, 5)
 
-        # 摘要
-        kw_lo = kw.lower()
-        lo = snippet.lower().find(kw_lo)
-        if lo >= 0:
-            esc = snippet[:lo].replace('<','&lt;')
-            mid = snippet[lo:lo+len(kw)].replace('<','&lt;')
-            aft = snippet[lo+len(kw):].replace('<','&lt;')
-            rich = (f'{esc}<span style="color:{C["accent"]};font-weight:bold">'
-                    f'{mid}</span>{aft}')
-        else:
-            rich = snippet.replace('<','&lt;')
         lbl = QLabel(rich)
         lbl.setTextFormat(Qt.TextFormat.RichText)
         lbl.setStyleSheet(f"color: {C['fg_file']}; font-size: 12px;")
         lbl.setWordWrap(False)
         lay.addWidget(lbl, 1)
 
-        def _click(e, f=fp, i=idx, s=snippet):
+        def _click(e, f=fp, ft=full, h=hits, i=idx):
             if e.button() == Qt.MouseButton.LeftButton:
-                hits = next((h for p, h in self._results if p == f), [])
-                self._show_preview(f, hits, self._input.text().strip(), i)
+                self._show_preview(f, ft, h, i)
         row.mousePressEvent = _click
         return row
 
-    def _show_preview(self, fp: str, hits: list, kw: str, idx: int):
-        self._sel_fp  = fp
-        self._sel_idx = idx
-        self._file_lbl.setText(Path(fp).stem)
-        self._preview_header.setText(f'{Path(fp).stem}  ·  第 {idx+1}/{len(hits)} 条')
+    def _show_preview(self, fp: str, full: str, hits: list, idx: int):
+        """右侧加载完整文件，用 ExtraSelections 高亮所有命中，滚动到选中项"""
+        self._sel_fp   = fp
+        self._sel_hits = hits
+        self._sel_idx  = idx
 
-        # 显示当前命中的上下文（完整段落）
-        _, snippet = hits[idx]
-        # 用 HTML 高亮
-        kw_lo = kw.lower()
-        out = snippet
-        lo = out.lower().find(kw_lo)
-        if lo >= 0:
-            out = (out[:lo]
-                   + f'<span style="background:#3a2e00;color:#e8c870;">'
-                   + out[lo:lo+len(kw)]
-                   + '</span>'
-                   + out[lo+len(kw):])
-        self._preview.setHtml(
-            f'<div style="font-family:\'PingFang SC\';font-size:16px;'
-            f'color:{C["fg"]};line-height:1.75;">{out}</div>')
+        self._preview_file_lbl.setText(Path(fp).stem)
+        self._file_lbl.setText(Path(fp).stem)
+        self._hit_lbl.setText(f'{idx+1} / {len(hits)}')
+
+        # 仅当文件切换时才重新 setPlainText（避免闪烁）
+        if self._preview.toPlainText() != full:
+            self._preview.setPlainText(full)
+            # 行间距
+            from PyQt6.QtGui import QTextBlockFormat
+            cur = QTextCursor(self._preview.document())
+            cur.select(QTextCursor.SelectionType.Document)
+            blk = QTextBlockFormat()
+            blk.setLineHeight(160, 1)
+            cur.setBlockFormat(blk)
+
+        # 所有命中：暗黄高亮
+        fmt_all = QTextCharFormat()
+        fmt_all.setBackground(QColor('#2a2400'))
+        fmt_all.setForeground(QColor('#c8a850'))
+        # 当前命中：亮黄高亮
+        fmt_cur = QTextCharFormat()
+        fmt_cur.setBackground(QColor('#3a2e00'))
+        fmt_cur.setForeground(QColor('#f0d070'))
+        fmt_cur.setFontWeight(QFont.Weight.Bold)
+
+        sels = []
+        for i, (pos, mlen) in enumerate(hits):
+            sel = QTextEdit.ExtraSelection()
+            cur = QTextCursor(self._preview.document())
+            cur.setPosition(pos)
+            cur.setPosition(pos + mlen, QTextCursor.MoveMode.KeepAnchor)
+            sel.cursor = cur
+            sel.format = fmt_cur if i == idx else fmt_all
+            sels.append(sel)
+        self._preview.setExtraSelections(sels)
+
+        # 滚动到当前命中居中
+        pos_cur = hits[idx][0]
+        c = QTextCursor(self._preview.document())
+        c.setPosition(pos_cur)
+        self._preview.setTextCursor(c)
+        self._preview.ensureCursorVisible()
+        rect = self._preview.cursorRect(c)
+        vp_h = self._preview.viewport().height()
+        sb = self._preview.verticalScrollBar()
+        sb.setValue(sb.value() + rect.center().y() - vp_h // 2)
+
+    def _prev_hit(self):
+        if self._sel_hits:
+            self._sel_idx = (self._sel_idx - 1) % len(self._sel_hits)
+            self._show_preview(self._sel_fp,
+                               self._preview.toPlainText(),
+                               self._sel_hits, self._sel_idx)
+
+    def _next_hit(self):
+        if self._sel_hits:
+            self._sel_idx = (self._sel_idx + 1) % len(self._sel_hits)
+            self._show_preview(self._sel_fp,
+                               self._preview.toPlainText(),
+                               self._sel_hits, self._sel_idx)
 
     def _open_selected(self):
         if self._sel_fp:
@@ -1763,6 +1871,10 @@ class GlobalSearchDialog(QDialog):
     def _show_recent(self):
         self._clear_list()
         self._result_lbl.setText('')
+        self._preview.clear()
+        self._preview_file_lbl.setText('选择左侧结果查看全文')
+        self._hit_lbl.setText('')
+        self._file_lbl.setText('')
         if not self._recent:
             return
         hdr = QLabel('最近搜索')
