@@ -133,6 +133,46 @@ class TagStore:
         t = self.tags.get(tid, {})
         return len(self.files_for(tid)) + sum(self.count_under(c) for c in t.get('children', []))
 
+    def reparent_tag(self, tid, new_parent_id):
+        """将标签移到新父标签下（new_parent_id=None 表示移到顶层）"""
+        if tid not in self.tags:
+            return
+        # 不能移到自己或自己的子孙下面
+        def is_descendant(ancestor, node):
+            t = self.tags.get(ancestor)
+            if not t:
+                return False
+            if node == ancestor:
+                return True
+            return any(is_descendant(c, node) for c in t.get('children', []))
+        if new_parent_id and is_descendant(tid, new_parent_id):
+            return
+        # 从旧父移除
+        old_pid = self.tags[tid]['parent']
+        if old_pid and old_pid in self.tags:
+            self.tags[old_pid]['children'] = [x for x in self.tags[old_pid]['children'] if x != tid]
+        # 加到新父
+        self.tags[tid]['parent'] = new_parent_id
+        if new_parent_id and new_parent_id in self.tags:
+            if tid not in self.tags[new_parent_id]['children']:
+                self.tags[new_parent_id]['children'].append(tid)
+        self.save()
+
+    def merge_into(self, src_tid, dst_tid):
+        """将 src 标签的所有文件合并到 dst 标签，然后删除 src"""
+        if src_tid not in self.tags or dst_tid not in self.tags:
+            return
+        # 收集 src 下所有文件（含子标签）
+        def collect_files(tid):
+            files = self.files_for(tid)
+            for cid in self.tags.get(tid, {}).get('children', []):
+                files.extend(collect_files(cid))
+            return files
+        for fp in collect_files(src_tid):
+            self.add_file(fp, dst_tid)
+        self.delete_tag(src_tid)
+        self.save()
+
     def _is_special(self, key):
         return key.startswith('__')
 
@@ -1221,6 +1261,33 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
                 self._ctx.add_command(label="导入 PDF 到此标签…",
                     command=lambda t=tid: self._import_pdf(t))
                 self._ctx.add_separator()
+                # 移动标签（换父）子菜单
+                all_tags = self._collect_all_tags()
+                if all_tags:
+                    move_tag_menu = tk.Menu(self._ctx, tearoff=0,
+                                            bg=C['bg_sidebar'], fg=C['fg'],
+                                            activebackground=C['bg_sel_tag'], activeforeground=C['fg'])
+                    move_tag_menu.add_command(label="移到顶层",
+                        command=lambda t=tid: (self.store.reparent_tag(t, None), self._refresh_tree()))
+                    move_tag_menu.add_separator()
+                    for tid_m, tname_m in all_tags:
+                        if tid_m != tid:
+                            move_tag_menu.add_command(
+                                label=tname_m,
+                                command=lambda t=tid, p=tid_m: (self.store.reparent_tag(t, p), self._refresh_tree()))
+                    self._ctx.add_cascade(label="移动到", menu=move_tag_menu)
+                # 合并到子菜单
+                if all_tags:
+                    merge_menu = tk.Menu(self._ctx, tearoff=0,
+                                         bg=C['bg_sidebar'], fg=C['fg'],
+                                         activebackground=C['bg_sel_tag'], activeforeground=C['fg'])
+                    for tid_m, tname_m in all_tags:
+                        if tid_m != tid:
+                            merge_menu.add_command(
+                                label=tname_m,
+                                command=lambda t=tid, d=tid_m: self._merge_tag(t, d))
+                    self._ctx.add_cascade(label="合并到", menu=merge_menu)
+                self._ctx.add_separator()
                 self._ctx.add_command(label="删除标签",
                     command=lambda: self._delete(tid))
             elif kind == 'file':
@@ -1318,6 +1385,14 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         name = self.store.tags[tid]['name']
         if messagebox.askyesno("删除", f"确定删除「{name}」？"):
             self.store.delete_tag(tid)
+            self._refresh_tree()
+
+    def _merge_tag(self, src_tid, dst_tid):
+        src_name = self.store.tags[src_tid]['name']
+        dst_name = self.store.tags[dst_tid]['name']
+        if messagebox.askyesno("合并标签",
+                               f"将「{src_name}」的所有文件合并到「{dst_name}」，\n并删除「{src_name}」？"):
+            self.store.merge_into(src_tid, dst_tid)
             self._refresh_tree()
 
     def _import(self, tag_id=None):
