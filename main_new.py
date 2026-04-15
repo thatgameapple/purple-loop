@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""逐字稿 v2 — PyQt6 + inline #tag"""
+"""purple loop v2 — PyQt6 + inline #tag"""
 
 import sys, os, json, re, uuid, subprocess
 from datetime import datetime
@@ -33,7 +33,7 @@ except ImportError:
     _HAS_DOCX = False
 
 # ── 常量 ──────────────────────────────────────────────────────────────────
-DATA_FILE = Path.home() / '.zhuzigao_v2.json'
+DATA_FILE = Path.home() / '.purple-loop.json'
 TAG_RE    = re.compile(r'#([\w\u4e00-\u9fff]+(?:/[\w\u4e00-\u9fff]+)*)')
 IS_MAC    = sys.platform == 'darwin'
 MOD       = Qt.KeyboardModifier.MetaModifier if IS_MAC else Qt.KeyboardModifier.ControlModifier
@@ -964,7 +964,7 @@ class SearchBar(QFrame):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('逐字稿')
+        self.setWindowTitle('purple loop')
         self.resize(1280, 800)
         self.setAcceptDrops(True)
 
@@ -1016,7 +1016,7 @@ class MainWindow(QMainWindow):
             f"background: {C['bg_sidebar']}; border-bottom: 1px solid {C['border']};")
         _top_lay = QHBoxLayout(_top)
         _top_lay.setContentsMargins(12, 0, 8, 0)
-        _lbl = QLabel('逐字稿')
+        _lbl = QLabel('purple loop')
         _lbl.setStyleSheet(
             f"color: {C['fg_dim']}; font-size: 13px; font-weight: bold;")
         _top_lay.addWidget(_lbl)
@@ -1438,7 +1438,7 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName('逐字稿')
+    app.setApplicationName('purple loop')
 
     # 加载字体
     if FONTS_DIR.exists():
