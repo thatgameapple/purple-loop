@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QSplitter, QTreeWidget, QTreeWidgetItem,
     QStackedWidget, QTextEdit, QScrollArea, QLabel, QVBoxLayout, QHBoxLayout,
     QPushButton, QLineEdit, QFrame, QMenu, QFileDialog, QInputDialog,
-    QMessageBox, QSizePolicy, QAbstractScrollArea
+    QMessageBox, QSizePolicy, QAbstractScrollArea, QDialog, QButtonGroup
 )
 from PyQt6.QtGui import (
     QColor, QFont, QTextCharFormat, QTextCursor, QTextDocument,
@@ -327,13 +327,19 @@ class AnnotPanel(QScrollArea):
             self._cards[annot['id']] = card
 
     def _make_card(self, annot: dict) -> QFrame:
+        # 兼容旧 'label' 类型
         if annot['type'] == 'label':
             dot = '#c4b0f8'
-            card_label = annot.get('label_text', '标签')
+            bg_pill = '#1e1040'
         else:
             _, dot = C.get(annot['type'], (None, C['accent']))
             dot = dot or C['accent']
-            card_label = ANNOT_LABEL.get(annot['type'], annot['type'])
+            bg_pill, _ = C.get(annot['type'], ('#1a1040', None))
+            bg_pill = bg_pill or C['bg_sel']
+
+        label_text = annot.get('label_text', '')
+        card_label = label_text or ANNOT_LABEL.get(annot['type'], annot['type'])
+
         card = QFrame()
         card.setStyleSheet(f"""
             QFrame {{
@@ -346,16 +352,14 @@ class AnnotPanel(QScrollArea):
         lay.setContentsMargins(10, 8, 6, 8)
         lay.setSpacing(4)
 
-        # 顶栏：类型标签 + 删除按钮
+        # 顶栏：类型标签 / 标签名 pill + 删除按钮
         top = QHBoxLayout()
-        if annot['type'] == 'label':
-            # 以 pill 样式显示标签名
-            pill = QLabel(f'  # {card_label}  ')
-            pill.setStyleSheet(f"""
-                background: #1e1040; color: {dot};
+        if label_text:
+            type_lbl = QLabel(f'  # {card_label}  ')
+            type_lbl.setStyleSheet(f"""
+                background: {bg_pill}; color: {dot};
                 border-radius: 3px; font-size: 11px; padding: 1px 0;
             """)
-            type_lbl = pill
         else:
             type_lbl = QLabel(card_label)
             type_lbl.setStyleSheet(f"color: {dot}; font-size: 11px;")
@@ -602,19 +606,24 @@ class TxtEditor(QTextEdit):
         fmt = QTextCharFormat()
         fmt.setFont(self.font())
         fmt.setForeground(QColor(C['fg']))
-        if annot['type'] == 'label':
+        atype = annot['type']
+        # 兼容旧 label 类型
+        if atype == 'label':
             fmt.setBackground(QColor('#1e1040'))
             fmt.setForeground(QColor('#c4b0f8'))
             fmt.setFontUnderline(True)
         else:
-            bg, fg = C.get(annot['type'], (None, None))
+            bg, fg = C.get(atype, (None, None))
             if bg:
                 fmt.setBackground(QColor(bg))
-            if fg and annot['type'] not in ('bold', 'underline'):
+            if fg and atype not in ('bold', 'underline'):
                 fmt.setForeground(QColor(fg))
-            if annot['type'] == 'bold':
+            if atype == 'bold':
                 fmt.setFontWeight(QFont.Weight.Bold)
-            if annot['type'] == 'underline':
+            if atype == 'underline':
+                fmt.setFontUnderline(True)
+            # 有标签名时加下划线以区分普通高亮
+            if annot.get('label_text'):
                 fmt.setFontUnderline(True)
         cur.setCharFormat(fmt)
 
@@ -1013,6 +1022,123 @@ class SearchBar(QFrame):
         self._count_lbl.setText(f'{n} 处' if n else '')
 
 
+# ── 文字标签弹窗（颜色 + 可选标签名）────────────────────────────────────
+
+class LabelDialog(QDialog):
+    """选颜色 + 输入标签名，两步合一"""
+
+    _COLORS = [
+        ('hl_yellow', '#e8c870', '#3a2e00'),
+        ('hl_green',  '#5ec87a', '#0e2a1a'),
+        ('hl_pink',   '#e86090', '#3a1020'),
+        ('hl_purple', '#a878f0', '#1a1040'),
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._color_type = 'hl_yellow'
+
+        outer = QFrame(self)
+        outer.setStyleSheet(f"""
+            QFrame {{
+                background: {C['bg_input']};
+                border: 1px solid {C['border']};
+                border-radius: 10px;
+            }}
+        """)
+        wrap = QVBoxLayout(self)
+        wrap.setContentsMargins(0, 0, 0, 0)
+        wrap.addWidget(outer)
+
+        lay = QVBoxLayout(outer)
+        lay.setContentsMargins(16, 14, 16, 14)
+        lay.setSpacing(10)
+
+        # 提示
+        hint = QLabel('选择颜色，输入标签名（可留空）')
+        hint.setStyleSheet(f"color: {C['fg_dim']}; font-size: 12px;")
+        lay.addWidget(hint)
+
+        # 4 色选择
+        color_row = QHBoxLayout()
+        color_row.setSpacing(8)
+        self._btn_group = QButtonGroup(self)
+        for i, (ctype, dot, bg) in enumerate(self._COLORS):
+            btn = QPushButton()
+            btn.setFixedSize(28, 28)
+            btn.setCheckable(True)
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {dot}; border-radius: 14px;
+                    border: 2px solid transparent;
+                }}
+                QPushButton:checked {{
+                    border: 2px solid white;
+                }}
+            """)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda _, t=ctype: self._pick(t))
+            self._btn_group.addButton(btn, i)
+            color_row.addWidget(btn)
+        color_row.addStretch()
+        lay.addLayout(color_row)
+        # 默认选第一个
+        self._btn_group.button(0).setChecked(True)
+
+        # 标签名输入
+        self._input = QLineEdit()
+        self._input.setPlaceholderText('标签名（可选）…')
+        self._input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {C['bg']}; color: {C['fg']};
+                border: 1px solid {C['border']}; border-radius: 6px;
+                padding: 7px 10px; font-size: 14px;
+            }}
+            QLineEdit:focus {{ border-color: {C['accent']}; }}
+        """)
+        self._input.returnPressed.connect(self.accept)
+        lay.addWidget(self._input)
+
+        # 确认 / 取消
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        cancel = QPushButton('取消')
+        cancel.setFixedHeight(32)
+        cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel.setStyleSheet(f"""
+            QPushButton {{
+                background: {C['bg_sel']}; color: {C['fg_dim']};
+                border: none; border-radius: 6px; font-size: 13px;
+            }}
+            QPushButton:hover {{ color: {C['fg']}; }}
+        """)
+        cancel.clicked.connect(self.reject)
+        ok = QPushButton('应用')
+        ok.setFixedHeight(32)
+        ok.setCursor(Qt.CursorShape.PointingHandCursor)
+        ok.setStyleSheet(f"""
+            QPushButton {{
+                background: {C['accent']}; color: white;
+                border: none; border-radius: 6px; font-size: 13px;
+            }}
+            QPushButton:hover {{ background: #6aaaf8; }}
+        """)
+        ok.clicked.connect(self.accept)
+        btn_row.addWidget(cancel)
+        btn_row.addWidget(ok)
+        lay.addLayout(btn_row)
+
+        self._input.setFocus()
+
+    def _pick(self, ctype: str):
+        self._color_type = ctype
+
+    def result_data(self) -> tuple[str, str]:
+        """返回 (color_type, label_text)"""
+        return self._color_type, self._input.text().strip()
+
+
 # ── 主窗口 ────────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
@@ -1347,8 +1473,7 @@ class MainWindow(QMainWindow):
             self._annot_panel.refresh(self._fp)
 
     def _request_label(self):
-        """点击 # 按钮后：先关浮动条，再弹输入框（IME 在 Popup 里不工作）"""
-        # 保存当前选区
+        """点击 # 按钮：保存选区 → 关浮动条 → 弹颜色+标签名弹窗"""
         cur = self._txt_editor.textCursor()
         if not cur.hasSelection():
             self._annot_bar.hide()
@@ -1357,17 +1482,18 @@ class MainWindow(QMainWindow):
         saved_position = cur.position()
         self._annot_bar.hide()
 
-        label_text, ok = QInputDialog.getText(
-            self, '文字标签', '标签名：')
-        if not ok or not label_text.strip():
+        dlg = LabelDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
 
-        # 恢复选区后应用标签
+        color_type, label_text = dlg.result_data()
+
+        # 恢复选区后应用
         c = self._txt_editor.textCursor()
         c.setPosition(saved_anchor)
         c.setPosition(saved_position, QTextCursor.MoveMode.KeepAnchor)
         self._txt_editor.setTextCursor(c)
-        annot = self._txt_editor.annotate('label', label_text.strip())
+        annot = self._txt_editor.annotate(color_type, label_text)
         if annot:
             self._annot_panel.refresh(self._fp)
 
