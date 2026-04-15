@@ -144,6 +144,11 @@ class FileStore:
         self.data['annotations'][filepath] = [a for a in lst if a['id'] != annot_id]
         self.save()
 
+    def clear_all_annotations(self, filepath: str):
+        if filepath in self.data.get('annotations', {}):
+            self.data['annotations'][filepath] = []
+            self.save()
+
     def update_note(self, filepath: str, annot_id: str, note: str):
         for a in self.data.get('annotations', {}).get(filepath, []):
             if a['id'] == annot_id:
@@ -302,8 +307,9 @@ _FILTER_DEFS = [
 
 
 class AnnotPanel(QWidget):
-    jump_to = pyqtSignal(str)   # annot_id
-    delete  = pyqtSignal(str)   # annot_id
+    jump_to   = pyqtSignal(str)   # annot_id
+    delete    = pyqtSignal(str)   # annot_id
+    clear_all = pyqtSignal()      # 清除所有标注
 
     def __init__(self, store: FileStore, parent=None):
         super().__init__(parent)
@@ -350,6 +356,21 @@ class AnnotPanel(QWidget):
             self._filter_btns[key] = btn
             fb_lay.addWidget(btn)
         fb_lay.addStretch()
+
+        # 清空全部标注按钮
+        clear_btn = QPushButton('清空')
+        clear_btn.setFixedHeight(20)
+        clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        clear_btn.setToolTip('删除当前文件所有标注')
+        clear_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {C['fg_dim']};
+                border: none; font-size: 11px; padding: 0 4px;
+            }}
+            QPushButton:hover {{ color: #ff6b6b; }}
+        """)
+        clear_btn.clicked.connect(self._request_clear)
+        fb_lay.addWidget(clear_btn)
         root.addWidget(filter_bar)
 
         # 默认选"全部"
@@ -388,6 +409,20 @@ class AnnotPanel(QWidget):
         for key, btn in self._filter_btns.items():
             btn.setChecked(key == str(ftype))
         self.refresh(self._fp)
+
+    def _request_clear(self):
+        if not self._fp:
+            return
+        n = len(self.store.get_annotations(self._fp))
+        if n == 0:
+            return
+        reply = QMessageBox.question(
+            self, '清除所有标注',
+            f'删除当前文件全部 {n} 条标注？此操作不可撤销。',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            self.clear_all.emit()
 
     def refresh(self, filepath: str | None):
         self._fp = filepath
@@ -676,8 +711,8 @@ class TxtEditor(QTextEdit):
         self._loading = True
         text = Path(path).read_text('utf-8')
         self.setPlainText(text)
+        self._apply_line_spacing()   # setPlainText 会重置 block format；保持在 _loading=True 内
         self._loading = False
-        self._apply_line_spacing()   # setPlainText 会重置 block format
         self._apply_annotations()
 
         # 恢复阅读位置（延迟到布局完成后）
@@ -697,9 +732,11 @@ class TxtEditor(QTextEdit):
         # 彻底清除：用内存文本重置文档（唯一可靠清除所有字符格式的方式）
         cur_pos   = self.textCursor().position()
         scroll    = self.verticalScrollBar().value()
+        # _loading=True 覆盖整个过程：
+        # setPlainText / setBlockFormat / setCharFormat 都会触发 contentsChange，
+        # 必须全程屏蔽，否则 _on_change 会误更新偏移量
         self._loading = True
         self.setPlainText(self.toPlainText())   # 读内存，不丢未保存内容
-        self._loading = False
         self._apply_line_spacing()
         self.setExtraSelections([])
         # 恢复光标和滚动
@@ -710,13 +747,25 @@ class TxtEditor(QTextEdit):
         # 应用标注
         for a in self.store.get_annotations(self._fp):
             self._apply_fmt(a)
+        self._loading = False   # 全部完成后再解锁
 
     def _apply_fmt(self, annot: dict):
         doc = self.document()
+        start = annot['start']
+        end   = annot['end']
+        # 防止无效标注（start >= end 或覆盖全文）
+        if start >= end:
+            return
+        char_count = doc.characterCount()
+        if char_count > 20 and (end - start) >= char_count - 1:
+            return   # 跳过覆盖全文的异常标注
+        clamped_start = min(start, char_count - 1)
+        clamped_end   = min(end,   char_count - 1)
+        if clamped_start >= clamped_end:
+            return   # 夹取后选区为空，跳过
         cur = QTextCursor(doc)
-        cur.setPosition(min(annot['start'], doc.characterCount() - 1))
-        cur.setPosition(min(annot['end'],   doc.characterCount() - 1),
-                        QTextCursor.MoveMode.KeepAnchor)
+        cur.setPosition(clamped_start)
+        cur.setPosition(clamped_end, QTextCursor.MoveMode.KeepAnchor)
         fmt = QTextCharFormat()
         fmt.setFont(self.font())
         fmt.setForeground(QColor(C['fg']))
@@ -1954,6 +2003,7 @@ class MainWindow(QMainWindow):
         self._annot_panel = AnnotPanel(self.store)
         self._annot_panel.jump_to.connect(self._jump_to_annot)
         self._annot_panel.delete.connect(self._delete_annot_by_id)
+        self._annot_panel.clear_all.connect(self._clear_all_annots)
         self._annot_panel.setMinimumWidth(160)
         self._annot_panel.setMaximumWidth(300)
         self._content_split.addWidget(self._annot_panel)
@@ -2043,6 +2093,7 @@ class MainWindow(QMainWindow):
         _act(am, '下划线', lambda: self._do_annotate('underline'), 'Ctrl+U')
         am.addSeparator()
         _act(am, '删除光标处标注', self._do_remove_annot)
+        _act(am, '清除所有标注…', self._confirm_clear_all)
 
         # 视图
         vm = mb.addMenu('视图')
@@ -2264,6 +2315,28 @@ class MainWindow(QMainWindow):
         self.store.remove_annotation(self._fp, annot_id)
         self._txt_editor._apply_annotations()
         self._annot_panel.refresh(self._fp)
+
+    def _clear_all_annots(self):
+        if not self._fp:
+            return
+        self.store.clear_all_annotations(self._fp)
+        self._txt_editor._apply_annotations()
+        self._annot_panel.refresh(self._fp)
+
+    def _confirm_clear_all(self):
+        if not self._fp:
+            return
+        n = len(self.store.get_annotations(self._fp))
+        if n == 0:
+            self.statusBar().showMessage('当前文件没有标注', 2000)
+            return
+        reply = QMessageBox.question(
+            self, '清除所有标注',
+            f'删除当前文件全部 {n} 条标注？此操作不可撤销。',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            self._clear_all_annots()
 
     def _jump_to_annot(self, annot_id: str):
         self._txt_editor.jump_to_annot(annot_id)
