@@ -682,10 +682,14 @@ class TxtEditor(QTextEdit):
     def _apply_annotations(self):
         if not self._fp:
             return
-        # 先清除所有格式
+        # 先清除所有格式（必须显式设置 bg/fg，否则 Qt 不保证清掉残留色）
+        clear_fmt = QTextCharFormat()
+        clear_fmt.setBackground(QColor(C['bg']))
+        clear_fmt.setForeground(QColor(C['fg']))
+        clear_fmt.setFont(self.font())
         cur = QTextCursor(self.document())
         cur.select(QTextCursor.SelectionType.Document)
-        cur.setCharFormat(QTextCharFormat())
+        cur.setCharFormat(clear_fmt)
         cur.clearSelection()
         # 再应用标注
         for a in self.store.get_annotations(self._fp):
