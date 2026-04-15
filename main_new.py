@@ -634,7 +634,19 @@ class TxtEditor(QTextEdit):
         self._save_timer.timeout.connect(self.save)
         self.document().contentsChanged.connect(self._schedule_save)
 
-        pass  # 选区检测改为 mouseReleaseEvent
+        # 右下角字数显示（呼吸灯）
+        self._count_lbl = QLabel('', self)
+        self._count_lbl.setFont(QFont('PingFang SC', 11))
+        self._count_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._count_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.document().contentsChanged.connect(self._update_count)
+
+        import math
+        self._wc_step = 0
+        self._wc_timer = QTimer(self)
+        self._wc_timer.setInterval(50)
+        self._wc_timer.timeout.connect(self._breathe_count)
+        self._wc_timer.start()
 
     def _set_font(self):
         # 尝试加载 LXGW WenKai，回退到系统字体
@@ -797,6 +809,31 @@ class TxtEditor(QTextEdit):
                 Path(self._fp).write_text(self.toPlainText(), 'utf-8')
             except Exception:
                 pass
+
+    def _update_count(self):
+        n = len(self.toPlainText().replace('\n', '').replace(' ', ''))
+        self._count_lbl.setText(f'{n} 字')
+        self._position_count_lbl()
+
+    def _position_count_lbl(self):
+        lbl = self._count_lbl
+        lbl.adjustSize()
+        m = 14  # 离边角的距离
+        lbl.move(self.width() - lbl.width() - m,
+                 self.height() - lbl.height() - m)
+
+    def _breathe_count(self):
+        import math
+        self._wc_step += 1
+        val = (math.sin(self._wc_step * 0.05) + 1) / 2
+        v = int(0x3a + val * 0x34)
+        color = f"#{v:02x}{v:02x}{v:02x}"
+        self._count_lbl.setStyleSheet(
+            f"color: {color}; background: transparent;")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._position_count_lbl()
 
     def contextMenuEvent(self, event):
         menu = QMenu(self)
