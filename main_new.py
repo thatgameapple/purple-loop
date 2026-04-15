@@ -38,12 +38,18 @@ _FILLER_PARTS = [
     '啊', '吧', '呢', '嘛', '呀', '啦', '咯', '哩', '喽',
     # 高频口头禅 / 话语标记（先长后短，避免短的先匹配）
     '就是说', '也就是说', '你知道吧', '你知道', '怎么说呢', '怎么说',
-    '然后呢', '然后', '就是', '那个', '这个',
+    '然后呢', '然后',
     '对对对', '对对', '好吧', '是吧', '是啊',
     '反正', '其实',
+    # 注意：'就是'、'那个'、'这个' 语义用法太多，高亮误匹配率高，仅保留频率统计
 ]
-# 构建正则：先匹配长词，词间不加边界（中文无空格边界）
-FILLER_RE = re.compile('(' + '|'.join(re.escape(w) for w in _FILLER_PARTS) + ')')
+# 高亮用：去掉语义歧义高的词，减少误匹配
+_FILLER_HIGHLIGHT = [w for w in _FILLER_PARTS if w not in ('就是', '那个', '这个')]
+FILLER_RE = re.compile('(' + '|'.join(re.escape(w) for w in _FILLER_HIGHLIGHT) + ')')
+
+# 频率统计用：保留全部词（包括就是/那个/这个，统计价值高）
+_FILLER_ALL = _FILLER_PARTS + ['就是', '那个', '这个']
+FILLER_STAT_RE = re.compile('(' + '|'.join(re.escape(w) for w in _FILLER_ALL) + ')')
 
 # ── 话语标记词（Discourse Markers）──────────────────────────────────────────
 # 按功能分4类，各类对应不同颜色高亮
@@ -2455,7 +2461,7 @@ class FillerAnalysisDialog(QDialog):
         for fp in files:
             try:
                 text = Path(fp).read_text('utf-8')
-                matches = FILLER_RE.findall(text)
+                matches = FILLER_STAT_RE.findall(text)
                 counter.update(matches)
                 total_files += 1
             except Exception:
