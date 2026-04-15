@@ -441,7 +441,7 @@ class TagHighlighter(QSyntaxHighlighter):
 # ── txt 编辑器 ───────────────────────────────────────────────────────────
 
 class TxtEditor(QTextEdit):
-    selection_changed_sig = pyqtSignal(bool)   # has_selection
+    mouse_released = pyqtSignal()   # 鼠标松开时通知主窗口检查选区
 
     def __init__(self, store: FileStore, parent=None):
         super().__init__(parent)
@@ -471,9 +471,7 @@ class TxtEditor(QTextEdit):
         self._save_timer.timeout.connect(self.save)
         self.document().contentsChanged.connect(self._schedule_save)
 
-        # 选区变化
-        self.selectionChanged.connect(
-            lambda: self.selection_changed_sig.emit(self.textCursor().hasSelection()))
+        pass  # 选区检测改为 mouseReleaseEvent
 
     def _set_font(self):
         # 尝试加载 LXGW WenKai，回退到系统字体
@@ -585,6 +583,11 @@ class TxtEditor(QTextEdit):
                 Path(self._fp).write_text(self.toPlainText(), 'utf-8')
             except Exception:
                 pass
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        if event.button() == Qt.MouseButton.LeftButton:
+            QTimer.singleShot(30, self.mouse_released.emit)
 
     def keyPressEvent(self, event):
         if event.modifiers() & MOD:
@@ -1060,7 +1063,7 @@ class MainWindow(QMainWindow):
 
         self._stack = QStackedWidget()
         self._txt_editor = TxtEditor(self.store)
-        self._txt_editor.selection_changed_sig.connect(self._on_selection_changed)
+        self._txt_editor.mouse_released.connect(self._on_mouse_released)
         self._txt_editor._save_timer.timeout.connect(self._refresh_sidebar)
         self._pdf_viewer = PdfViewer()
         self._word_viewer = WordViewer()
@@ -1301,21 +1304,34 @@ class MainWindow(QMainWindow):
             f'已将 #{src} 合并到 #{dst}，影响 {changed} 个文件', 4000)
 
     # ── 标注操作 ──────────────────────────────────────────────
-    def _on_selection_changed(self, has_sel: bool):
-        if has_sel and self._fp and self._fp.endswith('.txt'):
-            cur  = self._txt_editor.textCursor()
-            rect = self._txt_editor.cursorRect(cur)
-            gp   = self._txt_editor.mapToGlobal(rect.topLeft())
-            sh   = self._annot_bar.sizeHint()
-            x    = gp.x() - sh.width() // 2
-            y    = gp.y() - sh.height() - 10
-            scr  = QApplication.primaryScreen().geometry()
-            x    = max(4, min(x, scr.width()  - sh.width()  - 4))
-            y    = max(4, min(y, scr.height() - sh.height() - 4))
-            self._annot_bar.move(x, y)
-            self._annot_bar.show()
-        else:
+    def _on_mouse_released(self):
+        """鼠标松开后检查选区，选中 ≥5 字才弹工具条"""
+        if not (self._fp and self._fp.endswith('.txt')):
             self._annot_bar.hide()
+            return
+        cur = self._txt_editor.textCursor()
+        if not cur.hasSelection():
+            self._annot_bar.hide()
+            return
+        sel_text = cur.selectedText().replace('\u2029', '\n').strip()
+        if len(sel_text) < 5:
+            # 短选区：只是阅读定位，不弹工具条
+            self._annot_bar.hide()
+            return
+        # 定位到选区起点上方
+        start = min(cur.position(), cur.anchor())
+        tmp = QTextCursor(self._txt_editor.document())
+        tmp.setPosition(start)
+        rect = self._txt_editor.cursorRect(tmp)
+        gp   = self._txt_editor.mapToGlobal(rect.topLeft())
+        sh   = self._annot_bar.sizeHint()
+        x    = gp.x() - sh.width() // 2
+        y    = gp.y() - sh.height() - 12
+        scr  = QApplication.primaryScreen().geometry()
+        x    = max(4, min(x, scr.width()  - sh.width()  - 4))
+        y    = max(4, min(y, scr.height() - sh.height() - 4))
+        self._annot_bar.move(x, y)
+        self._annot_bar.show()
 
     def _do_annotate(self, atype: str):
         annot = self._txt_editor.annotate(atype)
