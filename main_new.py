@@ -2106,17 +2106,24 @@ class FillerAnalysisDialog(QDialog):
 
     def _populate_tags(self):
         self._tag_combo.clear()
-        self._tag_combo.addItem('全部文件', None)
-        tree = TagScanner.build_tree(self.store.get_txt_files())
-        for tag in sorted(tree.keys()):
-            self._tag_combo.addItem(f'#{tag}', tag)
+        # 用单独列表维护对应关系，避免 currentData() 类型问题
+        self._tag_list: list[str | None] = [None]   # index 0 → 全部
+        self._tag_combo.addItem('全部文件')
+        txt_files = self.store.get_txt_files()
+        self._tree = TagScanner.build_tree(txt_files)
+        for tag in sorted(self._tree.keys()):
+            self._tag_list.append(tag)
+            count = len(self._tree[tag])
+            self._tag_combo.addItem(f'#{tag}  ({count})')
 
     def _get_files(self) -> list[str]:
-        tag = self._tag_combo.currentData()
+        idx = self._tag_combo.currentIndex()
+        if idx <= 0 or idx >= len(self._tag_list):
+            return self.store.get_txt_files()
+        tag = self._tag_list[idx]
         if tag is None:
             return self.store.get_txt_files()
-        tree = TagScanner.build_tree(self.store.get_txt_files())
-        return tree.get(tag, [])
+        return self._tree.get(tag, [])
 
     def _run(self):
         from collections import Counter
