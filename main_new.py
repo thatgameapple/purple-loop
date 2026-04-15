@@ -2088,6 +2088,178 @@ class LabelDialog(QDialog):
         return self._color_type, self._input.text().strip()
 
 
+# ── 帮助说明 ──────────────────────────────────────────────────────────────
+
+class HelpDialog(QDialog):
+    _SS = f"""
+        QDialog {{ background: {C['bg']}; }}
+        QScrollArea {{ background: transparent; border: none; }}
+        QWidget#content {{ background: transparent; }}
+        QLabel {{ background: transparent; }}
+        QScrollBar:vertical {{ background: transparent; width: 4px; }}
+        QScrollBar::handle:vertical {{ background: #444448; border-radius: 2px; min-height: 20px; }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+        QPushButton {{
+            background: {C['bg_sel']}; color: {C['fg_dim']};
+            border: none; border-radius: 5px; padding: 5px 20px; font-size: 13px;
+        }}
+        QPushButton:hover {{ color: {C['fg']}; }}
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('功能说明')
+        self.resize(580, 720)
+        self.setMinimumSize(460, 500)
+        self.setStyleSheet(self._SS)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        content = QWidget()
+        content.setObjectName('content')
+        lay = QVBoxLayout(content)
+        lay.setContentsMargins(32, 28, 32, 28)
+        lay.setSpacing(0)
+        scroll.setWidget(content)
+        root.addWidget(scroll)
+
+        def title(text):
+            lbl = QLabel(text)
+            lbl.setStyleSheet(f'color: {C["fg"]}; font-size: 17px; font-weight: bold; padding-top: 18px; padding-bottom: 6px;')
+            lay.addWidget(lbl)
+
+        def subtitle(text):
+            lbl = QLabel(text)
+            lbl.setStyleSheet(f'color: {C["fg_tag"]}; font-size: 13px; padding-bottom: 10px;')
+            lbl.setWordWrap(True)
+            lay.addWidget(lbl)
+
+        def sep():
+            line = QFrame()
+            line.setFrameShape(QFrame.Shape.HLine)
+            line.setStyleSheet(f'color: {C["border"]}; margin: 6px 0;')
+            lay.addWidget(line)
+
+        def color_row(dot_color: str, label: str, desc: str, examples: str):
+            row = QWidget()
+            row.setStyleSheet(f'background: {C["bg_input"]}; border-radius: 7px; margin-bottom: 8px;')
+            h = QVBoxLayout(row)
+            h.setContentsMargins(14, 10, 14, 10)
+            h.setSpacing(4)
+            # 首行：色点 + 标签
+            top_row = QHBoxLayout()
+            top_row.setSpacing(8)
+            dot = QLabel('●')
+            dot.setStyleSheet(f'color: {dot_color}; font-size: 16px;')
+            dot.setFixedWidth(18)
+            top_row.addWidget(dot)
+            lbl = QLabel(label)
+            lbl.setStyleSheet(f'color: {C["fg"]}; font-size: 14px; font-weight: bold;')
+            top_row.addWidget(lbl)
+            top_row.addStretch()
+            h.addLayout(top_row)
+            # 说明
+            desc_lbl = QLabel(desc)
+            desc_lbl.setStyleSheet(f'color: {C["fg_tag"]}; font-size: 12px; padding-left: 26px;')
+            desc_lbl.setWordWrap(True)
+            h.addWidget(desc_lbl)
+            # 例词
+            ex_lbl = QLabel(examples)
+            ex_lbl.setStyleSheet(f'color: {dot_color}; font-size: 12px; padding-left: 26px; opacity: 0.85;')
+            ex_lbl.setWordWrap(True)
+            h.addWidget(ex_lbl)
+            lay.addWidget(row)
+
+        def shortcut_row(keys: str, desc: str):
+            row = QWidget()
+            row.setStyleSheet('background: transparent; margin-bottom: 4px;')
+            h = QHBoxLayout(row)
+            h.setContentsMargins(0, 2, 0, 2)
+            h.setSpacing(12)
+            key_lbl = QLabel(keys)
+            key_lbl.setFixedWidth(160)
+            key_lbl.setStyleSheet(f"""
+                color: {C['fg']};
+                background: {C['bg_input']};
+                border-radius: 5px;
+                padding: 3px 10px;
+                font-size: 12px;
+                font-family: monospace;
+            """)
+            h.addWidget(key_lbl)
+            desc_lbl = QLabel(desc)
+            desc_lbl.setStyleSheet(f'color: {C["fg_tag"]}; font-size: 13px;')
+            h.addWidget(desc_lbl)
+            h.addStretch()
+            lay.addWidget(row)
+
+        # ── 话语标记词
+        title('话语标记词高亮')
+        subtitle('话语标记词（Discourse Markers）是演讲和写作中用于组织逻辑、连接句子的词语。'
+                 '开启高亮后，可以直观看出说话人的逻辑结构和表达习惯。')
+        subtitle('开启方式：视图 → 话语标记词高亮')
+        sep()
+
+        color_row('#c47a3a', '橙色 · 因果类',
+                  '表示原因与结果的连接，揭示说话人的推理链条。',
+                  '因为、所以、由于、因此、既然、由此可见、以致、原来…')
+        color_row('#5a9ac4', '蓝色 · 转折类',
+                  '表示观点的反转或对比，常出现在论证的关键节点。',
+                  '但是、不过、然而、可是、虽然、尽管、反而、与此相反…')
+        color_row('#5aab7a', '绿色 · 递进 / 举例类',
+                  '表示补充、加强或具体说明，帮助理解论点的展开方式。',
+                  '而且、比如说、例如、换句话说、不仅、同时、还有、另外…')
+        color_row('#9e8cc0', '淡紫 · 结构 / 衔接类',
+                  '标示演讲的节奏和段落划分，如开头、推进、收尾。',
+                  '首先、其次、最后、接下来、那么、总之、总的来说、关于…')
+
+        # ── 语气词
+        title('语气词高亮')
+        subtitle('语气词是口语中的填充音和习惯用语，在逐字稿中频繁出现。高亮后可快速识别口头禅密度。')
+        subtitle('开启方式：视图 → 语气词高亮　　分析频率：视图 → 口头禅频率分析')
+        sep()
+
+        ex = QLabel('嗯、哎、呃、额、哦、哟、嗐、哼　/　啊、吧、呢、嘛、呀\n'
+                    '就是、那个、这个、然后、其实、反正　/　对对对、好吧、是吧…')
+        ex.setStyleSheet(f'color: #a07848; font-size: 12px; padding: 4px 0 12px 0;')
+        ex.setWordWrap(True)
+        lay.addWidget(ex)
+
+        # ── 快捷键
+        title('常用快捷键')
+        sep()
+        pairs = [
+            ('Ctrl+K',         '全局搜索'),
+            ('Ctrl+F',         '当前文件内搜索'),
+            ('Ctrl+S',         '保存当前文件'),
+            ('Ctrl+\\\\',        '显示 / 隐藏标注面板'),
+            ('Ctrl+Shift+Z',   '禅定模式（隐藏所有界面）'),
+            ('Cmd / Ctrl + ↑', '跳到文章开头'),
+            ('Cmd / Ctrl + ↓', '跳到文章末尾'),
+            ('F5',             '刷新侧栏标签'),
+        ]
+        for keys, desc in pairs:
+            shortcut_row(keys, desc)
+
+        lay.addStretch()
+
+        # 底部关闭按钮
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(32, 10, 32, 16)
+        btn_row.addStretch()
+        close_btn = QPushButton('关闭')
+        close_btn.setFixedWidth(80)
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(close_btn)
+        root.addLayout(btn_row)
+
+
 # ── 口头禅频率分析 ────────────────────────────────────────────────────────
 
 class FillerAnalysisDialog(QDialog):
@@ -2555,6 +2727,11 @@ class MainWindow(QMainWindow):
         vm.addSeparator()
         _act(vm, '刷新侧栏', self._refresh_sidebar, 'F5')
 
+        # 帮助
+        hm = mb.addMenu('帮助')
+        hm.setStyleSheet(_ms)
+        _act(hm, '功能说明…', self._open_help)
+
     def _apply_theme(self):
         self.setStyleSheet(f"QMainWindow {{ background: {C['bg']}; }}")
         pal = self.palette()
@@ -2618,6 +2795,15 @@ class MainWindow(QMainWindow):
 
     def _open_filler_analysis(self):
         dlg = FillerAnalysisDialog(self.store, self)
+        geo = self.geometry()
+        dlg.move(
+            geo.x() + (geo.width()  - dlg.width())  // 2,
+            geo.y() + (geo.height() - dlg.height()) // 3,
+        )
+        dlg.exec()
+
+    def _open_help(self):
+        dlg = HelpDialog(self)
         geo = self.geometry()
         dlg.move(
             geo.x() + (geo.width()  - dlg.width())  // 2,
