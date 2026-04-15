@@ -456,7 +456,8 @@ class TxtEditor(QTextEdit):
             QTextEdit {{
                 background: {C['bg']}; color: {C['fg']};
                 border: none; padding: 40px 60px;
-                selection-background-color: {C['bg_sel']};
+                selection-background-color: #7c6af7;
+                selection-color: #ffffff;
             }}
         """)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -583,6 +584,47 @@ class TxtEditor(QTextEdit):
                 Path(self._fp).write_text(self.toPlainText(), 'utf-8')
             except Exception:
                 pass
+
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background: {C['bg_input']}; color: {C['fg']};
+                border: 1px solid {C['border']}; border-radius: 6px; padding: 4px;
+            }}
+            QMenu::item {{ padding: 6px 20px; border-radius: 4px; }}
+            QMenu::item:selected {{ background: {C['bg_sel']}; }}
+            QMenu::item:disabled {{ color: {C['fg_dim']}; }}
+            QMenu::separator {{ background: {C['border']}; height: 1px; margin: 4px 8px; }}
+        """)
+        cur = self.textCursor()
+        has_sel = cur.hasSelection()
+
+        a_copy = QAction('复制', self)
+        a_copy.setShortcut(QKeySequence.StandardKey.Copy)
+        a_copy.setEnabled(has_sel)
+        a_copy.triggered.connect(self.copy)
+        menu.addAction(a_copy)
+
+        a_cut = QAction('剪切', self)
+        a_cut.setShortcut(QKeySequence.StandardKey.Cut)
+        a_cut.setEnabled(has_sel)
+        a_cut.triggered.connect(self.cut)
+        menu.addAction(a_cut)
+
+        a_paste = QAction('粘贴', self)
+        a_paste.setShortcut(QKeySequence.StandardKey.Paste)
+        a_paste.triggered.connect(self.paste)
+        menu.addAction(a_paste)
+
+        menu.addSeparator()
+
+        a_all = QAction('全选', self)
+        a_all.setShortcut(QKeySequence.StandardKey.SelectAll)
+        a_all.triggered.connect(self.selectAll)
+        menu.addAction(a_all)
+
+        menu.exec(event.globalPos())
 
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)
