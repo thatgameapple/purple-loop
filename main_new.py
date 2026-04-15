@@ -460,6 +460,11 @@ class TxtEditor(QTextEdit):
                 selection-color: #ffffff;
             }}
         """)
+        # 用 QPalette 强制紫色选区（覆盖 macOS 系统色）
+        pal = self.palette()
+        pal.setColor(QPalette.ColorRole.Highlight,        QColor('#7c6af7'))
+        pal.setColor(QPalette.ColorRole.HighlightedText,  QColor('#ffffff'))
+        self.setPalette(pal)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setReadOnly(False)
 
