@@ -290,18 +290,88 @@ class AnnotBar(QFrame):
 
 # ── 标注面板（右侧卡片列表）─────────────────────────────────────────────
 
-class AnnotPanel(QScrollArea):
+_FILTER_DEFS = [
+    # (type_key_or_None, dot_color,  tooltip)
+    (None,        '#e8e8e8', '全部'),
+    ('hl_yellow', '#e8c870', '黄色'),
+    ('hl_green',  '#5ec87a', '绿色'),
+    ('hl_pink',   '#e86090', '粉色'),
+    ('hl_purple', '#a878f0', '紫色'),
+]
+
+
+class AnnotPanel(QWidget):
     jump_to = pyqtSignal(str)   # annot_id
     delete  = pyqtSignal(str)   # annot_id
 
     def __init__(self, store: FileStore, parent=None):
         super().__init__(parent)
-        self.store    = store
-        self._fp      = None
-        self._cards   = {}     # annot_id -> card widget
-        self.setWidgetResizable(True)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setStyleSheet(f"background: {C['bg_sidebar']}; border: none;")
+        self.store  = store
+        self._fp    = None
+        self._cards = {}
+        self._filter: str | None = None   # None = 全部
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── 过滤圆点栏 ───────────────────────────────
+        filter_bar = QFrame()
+        filter_bar.setFixedHeight(34)
+        filter_bar.setStyleSheet(
+            f"background: {C['bg_sidebar']}; border-bottom: 1px solid {C['border']};")
+        fb_lay = QHBoxLayout(filter_bar)
+        fb_lay.setContentsMargins(10, 0, 10, 0)
+        fb_lay.setSpacing(8)
+
+        self._filter_btns: dict[str, QPushButton] = {}
+        for ftype, color, tip in _FILTER_DEFS:
+            btn = QPushButton()
+            btn.setFixedSize(12, 12)
+            btn.setCheckable(True)
+            btn.setToolTip(tip)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {color}; border-radius: 6px;
+                    border: 1.5px solid transparent;
+                }}
+                QPushButton:checked {{
+                    border: 1.5px solid white;
+                }}
+                QPushButton:!checked {{
+                    background: {color};
+                    opacity: 0.5;
+                }}
+            """)
+            btn.clicked.connect(lambda _, t=ftype: self._set_filter(t))
+            key = str(ftype)
+            self._filter_btns[key] = btn
+            fb_lay.addWidget(btn)
+        fb_lay.addStretch()
+        root.addWidget(filter_bar)
+
+        # 默认选"全部"
+        self._filter_btns['None'].setChecked(True)
+
+        # ── 卡片滚动区 ───────────────────────────────
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setStyleSheet(f"""
+            QScrollArea {{ background: {C['bg_sidebar']}; border: none; }}
+            QScrollBar:vertical {{
+                background: transparent; width: 3px; margin: 0;
+            }}
+            QScrollBar::handle:vertical {{
+                background: #444448; border-radius: 1px; min-height: 20px;
+            }}
+            QScrollBar::handle:vertical:hover {{ background: #606064; }}
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {{ height: 0; }}
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {{ background: transparent; }}
+        """)
 
         inner = QWidget()
         inner.setStyleSheet(f"background: {C['bg_sidebar']};")
@@ -309,11 +379,17 @@ class AnnotPanel(QScrollArea):
         self._layout.setContentsMargins(8, 8, 8, 8)
         self._layout.setSpacing(6)
         self._layout.addStretch()
-        self.setWidget(inner)
+        self._scroll.setWidget(inner)
+        root.addWidget(self._scroll, 1)
+
+    def _set_filter(self, ftype: str | None):
+        self._filter = ftype
+        for key, btn in self._filter_btns.items():
+            btn.setChecked(key == str(ftype))
+        self.refresh(self._fp)
 
     def refresh(self, filepath: str | None):
         self._fp = filepath
-        # 清空
         while self._layout.count() > 1:
             item = self._layout.takeAt(0)
             if item.widget():
@@ -321,7 +397,17 @@ class AnnotPanel(QScrollArea):
         self._cards.clear()
         if not filepath:
             return
-        for annot in self.store.get_annotations(filepath):
+
+        all_annots = self.store.get_annotations(filepath)
+        if self._filter is not None:
+            # 'label' 旧类型视为 hl_purple
+            shown = [a for a in all_annots
+                     if a['type'] == self._filter
+                     or (self._filter == 'hl_purple' and a['type'] == 'label')]
+        else:
+            shown = all_annots
+
+        for annot in shown:
             card = self._make_card(annot)
             self._layout.insertWidget(self._layout.count() - 1, card)
             self._cards[annot['id']] = card
