@@ -1444,9 +1444,11 @@ class GlobalSearchDialog(QDialog):
         snip_lbl.setTextFormat(Qt.TextFormat.RichText)
         lay.addWidget(snip_lbl)
 
-        card.mousePressEvent = lambda e, f=fp, k=kw: (
-            (self.open_file.emit(f, k), self.accept())
-            if e.button() == Qt.MouseButton.LeftButton else None)
+        def _on_click(e, f=fp, k=kw):
+            if e.button() == Qt.MouseButton.LeftButton:
+                self.open_file.emit(f, k)
+                self.accept()
+        card.mousePressEvent = _on_click
         return card
 
     def _clear_list(self):
@@ -1848,10 +1850,10 @@ class MainWindow(QMainWindow):
         """打开文件并高亮关键词"""
         self._open_file(fp)
         if kw:
-            QTimer.singleShot(100, lambda: (
-                self._search_bar.show(),
-                self._do_search(kw),
-            ))
+            def _show_search(k=kw):
+                self._search_bar.show()
+                self._do_search(k)
+            QTimer.singleShot(100, _show_search)
 
     # ── 禅定模式 ──────────────────────────────────────────────
     def _toggle_zen(self):
