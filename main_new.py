@@ -107,6 +107,16 @@ class FileStore:
     def get_imports(self) -> dict:
         return dict(self.data.get('imports', {}))
 
+    # ── 单独拖入的 .txt 文件 ───────────────────────────────
+    def add_txt(self, path: str):
+        lst = self.data.setdefault('txt_files', [])
+        if path not in lst:
+            lst.append(path)
+            self.save()
+
+    def get_txt_files(self) -> list:
+        return [p for p in self.data.get('txt_files', []) if Path(p).exists()]
+
     # ── 配置 ──────────────────────────────────────────────────
     def get_config(self, key, default=None):
         return self.data.get('config', {}).get(key, default)
@@ -455,10 +465,11 @@ class TxtEditor(QTextEdit):
         # 偏移追踪
         self.document().contentsChange.connect(self._on_change)
 
-        # 自动保存
+        # 自动保存：文字变化后 2 秒触发
         self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
         self._save_timer.timeout.connect(self.save)
-        self._save_timer.start(30_000)
+        self.document().contentsChanged.connect(self._schedule_save)
 
         # 选区变化
         self.selectionChanged.connect(
@@ -563,6 +574,10 @@ class TxtEditor(QTextEdit):
         delta = added - removed
         if delta:
             self.store.update_offsets(self._fp, pos, delta)
+
+    def _schedule_save(self):
+        if not self._loading:
+            self._save_timer.start(2000)   # 2 秒防抖
 
     def save(self):
         if self._fp:
@@ -1046,6 +1061,7 @@ class MainWindow(QMainWindow):
         self._stack = QStackedWidget()
         self._txt_editor = TxtEditor(self.store)
         self._txt_editor.selection_changed_sig.connect(self._on_selection_changed)
+        self._txt_editor._save_timer.timeout.connect(self._refresh_sidebar)
         self._pdf_viewer = PdfViewer()
         self._word_viewer = WordViewer()
         self._empty_lbl  = QLabel('将文件拖入此处，或双击左侧文件打开')
@@ -1162,12 +1178,16 @@ class MainWindow(QMainWindow):
 
     # ── 侧栏刷新 ──────────────────────────────────────────────
     def _refresh_sidebar(self):
+        txt_files = []
+        # 1. txt_dir 目录扫描
         txt_dir = self.store.get_config('txt_dir')
         if txt_dir and Path(txt_dir).exists():
-            txt_files = [str(f) for f in Path(txt_dir).rglob('*.txt')
-                         if not f.name.startswith('.')]
-        else:
-            txt_files = []
+            txt_files += [str(f) for f in Path(txt_dir).rglob('*.txt')
+                          if not f.name.startswith('.')]
+        # 2. 单独拖入的 .txt 文件
+        for p in self.store.get_txt_files():
+            if p not in txt_files:
+                txt_files.append(p)
         self._sidebar.refresh(txt_files)
 
     # ── 文件操作 ──────────────────────────────────────────────
@@ -1233,6 +1253,10 @@ class MainWindow(QMainWindow):
         self._txt_editor.save()
         self._refresh_sidebar()
         self.statusBar().showMessage('已保存', 2000)
+
+    def _on_editor_saved(self):
+        """编辑器自动保存后刷新侧栏"""
+        self._refresh_sidebar()
 
     # ── 标签操作（批量替换 txt 内容）────────────────────────
     def _rename_tag(self, old_path: str, new_name: str):
@@ -1380,13 +1404,13 @@ class MainWindow(QMainWindow):
             fp  = url.toLocalFile()
             ext = Path(fp).suffix.lower()
             if ext == '.txt':
+                self.store.add_txt(fp)   # 记录到持久化列表
                 self._open_file(fp)
-                self._refresh_sidebar()
             elif ext in ('.pdf', '.docx', '.doc'):
                 ftype = 'pdf' if ext == '.pdf' else 'docx'
                 self.store.add_import(fp, ftype)
-                self._refresh_sidebar()
                 self._open_file(fp)
+        self._refresh_sidebar()
         event.acceptProposedAction()
 
     def closeEvent(self, event):
