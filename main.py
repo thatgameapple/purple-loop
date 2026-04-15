@@ -503,14 +503,23 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
         # 支持鼠标滚轮滚动侧栏
         self.tree.bind('<MouseWheel>',
                        lambda e: self.tree.yview_scroll(int(-1*(e.delta/120)), 'units'))
-        self.tree.tag_configure('tag',    foreground=C['fg_tag'])
-        self.tree.tag_configure('file',   foreground=C['fg_file'])
-        self.tree.tag_configure('header', foreground=C['fg_dim2'])
+        self.tree.tag_configure('tag',         foreground=C['fg_tag'])
+        self.tree.tag_configure('file',        foreground=C['fg_file'])
+        self.tree.tag_configure('header',      foreground=C['fg_dim2'])
+        self.tree.tag_configure('drop_target', foreground=C['accent'],
+                                background=C['bg_sel_tag'])
         self.tree.bind('<<TreeviewSelect>>', self._on_tree_select)
         self.tree.bind('<<TreeviewOpen>>',   self._on_tree_toggle)
         self.tree.bind('<<TreeviewClose>>', self._on_tree_toggle)
         self.tree.bind('<Button-2>', self._on_rclick)
         self.tree.bind('<Button-3>', self._on_rclick)
+        # 拖放标签（Flomo 风格）
+        self._drag_src     = None   # 被拖拽的 item id
+        self._drag_src_tid = None   # 被拖拽的 tag id
+        self._drag_target  = None   # 当前高亮的目标 item
+        self.tree.bind('<ButtonPress-1>',   self._on_drag_start)
+        self.tree.bind('<B1-Motion>',       self._on_drag_motion)
+        self.tree.bind('<ButtonRelease-1>', self._on_drag_end)
 
         # Tooltip：悬停显示完整文件名
         self._tooltip_data  = {}   # item_id -> 完整显示文字
@@ -1194,6 +1203,77 @@ class App(TkinterDnD.Tk if _HAS_DND else tk.Tk):
                              text=self._trim_name(name),
                              values=(fp, 'file'), tags=('file',))
             self._tooltip_data[iid] = name
+
+    # ── 拖放标签（Flomo 风格）────────────────────────────────
+
+    def _on_drag_start(self, event):
+        item = self.tree.identify_row(event.y)
+        if not item:
+            self._drag_src = None
+            return
+        v = self.tree.item(item, 'values')
+        if v and v[1] == 'tag' and v[0] not in ('__untagged__', '__pin_hdr__'):
+            self._drag_src     = item
+            self._drag_src_tid = v[0]
+        else:
+            self._drag_src = None
+
+    def _drag_set_target(self, new_target):
+        """更新拖放高亮目标"""
+        if self._drag_target == new_target:
+            return
+        # 清除旧高亮
+        if self._drag_target:
+            try:
+                old_v = self.tree.item(self._drag_target, 'values')
+                old_kind = old_v[1] if old_v else 'tag'
+                self.tree.item(self._drag_target, tags=(old_kind,))
+            except Exception:
+                pass
+        self._drag_target = new_target
+        # 设新高亮
+        if new_target:
+            try:
+                self.tree.item(new_target, tags=('drop_target',))
+            except Exception:
+                pass
+
+    def _on_drag_motion(self, event):
+        if not self._drag_src:
+            return
+        self.tree.config(cursor='fleur')
+        target = self.tree.identify_row(event.y)
+        # 目标必须是另一个标签，且不能是自己
+        if target and target != self._drag_src:
+            v = self.tree.item(target, 'values')
+            if v and v[1] == 'tag' and v[0] not in ('__untagged__', '__pin_hdr__'):
+                self._drag_set_target(target)
+                return
+        # 鼠标在空白区：高亮清除，表示"放到顶层"
+        self._drag_set_target(None)
+
+    def _on_drag_end(self, event):
+        if not self._drag_src:
+            return
+        self.tree.config(cursor='')
+        target_item = self._drag_target
+        src_tid     = self._drag_src_tid
+        self._drag_src = None
+        self._drag_src_tid = None
+        self._drag_set_target(None)   # 清高亮
+
+        if target_item:
+            tv = self.tree.item(target_item, 'values')
+            if tv and tv[1] == 'tag':
+                dst_tid = tv[0]
+                if dst_tid != src_tid:
+                    self.store.reparent_tag(src_tid, dst_tid)
+                    self._refresh_tree()
+        else:
+            # 拖到空白 → 提升为顶级标签
+            if self.store.tags.get(src_tid, {}).get('parent'):
+                self.store.reparent_tag(src_tid, None)
+                self._refresh_tree()
 
     # ── 事件 ───────────────────────────────────────────────
 
