@@ -948,6 +948,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle('逐字稿')
         self.resize(1280, 800)
+        self.setAcceptDrops(True)
 
         self.store = FileStore(DATA_FILE)
         self._fp:  str | None = None
@@ -1047,7 +1048,7 @@ class MainWindow(QMainWindow):
         self._txt_editor.selection_changed_sig.connect(self._on_selection_changed)
         self._pdf_viewer = PdfViewer()
         self._word_viewer = WordViewer()
-        self._empty_lbl  = QLabel('双击左侧文件打开')
+        self._empty_lbl  = QLabel('将文件拖入此处，或双击左侧文件打开')
         self._empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_lbl.setStyleSheet(
             f"color: {C['fg_dim']}; font-size: 16px; background: {C['bg']};")
@@ -1363,6 +1364,30 @@ class MainWindow(QMainWindow):
             elif self._note_bar.isVisible():
                 self._note_bar.hide()
         super().keyPressEvent(event)
+
+    # ── 拖放文件 ──────────────────────────────────────────────
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            exts = {Path(u.toLocalFile()).suffix.lower() for u in urls}
+            if exts & {'.txt', '.pdf', '.docx', '.doc'}:
+                event.acceptProposedAction()
+                return
+        event.ignore()
+
+    def dropEvent(self, event):
+        for url in event.mimeData().urls():
+            fp  = url.toLocalFile()
+            ext = Path(fp).suffix.lower()
+            if ext == '.txt':
+                self._open_file(fp)
+                self._refresh_sidebar()
+            elif ext in ('.pdf', '.docx', '.doc'):
+                ftype = 'pdf' if ext == '.pdf' else 'docx'
+                self.store.add_import(fp, ftype)
+                self._refresh_sidebar()
+                self._open_file(fp)
+        event.acceptProposedAction()
 
     def closeEvent(self, event):
         self._txt_editor.save()
