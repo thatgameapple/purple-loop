@@ -682,18 +682,20 @@ class TxtEditor(QTextEdit):
     def _apply_annotations(self):
         if not self._fp:
             return
-        # 清除搜索高亮（ExtraSelections 层，不进文档）
+        # 彻底清除：用内存文本重置文档（唯一可靠清除所有字符格式的方式）
+        cur_pos   = self.textCursor().position()
+        scroll    = self.verticalScrollBar().value()
+        self._loading = True
+        self.setPlainText(self.toPlainText())   # 读内存，不丢未保存内容
+        self._loading = False
+        self._apply_line_spacing()
         self.setExtraSelections([])
-        # 清除所有字符格式（显式设 bg/fg 保证覆盖残留）
-        clear_fmt = QTextCharFormat()
-        clear_fmt.setBackground(QColor(C['bg']))
-        clear_fmt.setForeground(QColor(C['fg']))
-        clear_fmt.setFont(self.font())
-        cur = QTextCursor(self.document())
-        cur.select(QTextCursor.SelectionType.Document)
-        cur.setCharFormat(clear_fmt)
-        cur.clearSelection()
-        # 再应用标注
+        # 恢复光标和滚动
+        c = self.textCursor()
+        c.setPosition(min(cur_pos, self.document().characterCount() - 1))
+        self.setTextCursor(c)
+        self.verticalScrollBar().setValue(scroll)
+        # 应用标注
         for a in self.store.get_annotations(self._fp):
             self._apply_fmt(a)
 
