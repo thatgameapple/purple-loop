@@ -2020,6 +2020,201 @@ class LabelDialog(QDialog):
         return self._color_type, self._input.text().strip()
 
 
+# ── 口头禅频率分析 ────────────────────────────────────────────────────────
+
+class FillerAnalysisDialog(QDialog):
+    """高频口头禅分析：按标签筛选文件，统计各语气词出现频率"""
+
+    _SS = f"""
+        QDialog {{ background: {C['bg']}; color: {C['fg']}; }}
+        QLabel {{ color: {C['fg']}; }}
+        QComboBox {{
+            background: {C['bg_sel']}; color: {C['fg']};
+            border: 1px solid {C['border']}; border-radius: 5px;
+            padding: 3px 10px; font-size: 13px;
+        }}
+        QComboBox::drop-down {{ border: none; width: 16px; }}
+        QComboBox QAbstractItemView {{
+            background: {C['bg_input']}; color: {C['fg']};
+            border: 1px solid {C['border']};
+            selection-background-color: {C['bg_sel']};
+        }}
+        QPushButton {{
+            background: {C['accent']}; color: white;
+            border: none; border-radius: 5px;
+            padding: 5px 18px; font-size: 13px;
+        }}
+        QPushButton:hover {{ background: #9b8cc4; }}
+        QScrollBar:vertical {{ background: transparent; width: 4px; }}
+        QScrollBar::handle:vertical {{ background: #444448; border-radius: 2px; min-height: 20px; }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+    """
+
+    def __init__(self, store: 'FileStore', parent=None):
+        super().__init__(parent)
+        self.store = store
+        self.setWindowTitle('口头禅频率分析')
+        self.resize(560, 680)
+        self.setMinimumSize(420, 400)
+        self.setStyleSheet(self._SS)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 18, 20, 18)
+        root.setSpacing(12)
+
+        # ── 顶部：标签选择 + 分析按钮
+        top = QHBoxLayout()
+        top.setSpacing(10)
+        lbl = QLabel('分析范围：')
+        lbl.setStyleSheet(f'color: {C["fg_tag"]}; font-size: 13px;')
+        top.addWidget(lbl)
+
+        self._tag_combo = QComboBox()
+        self._tag_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        top.addWidget(self._tag_combo)
+
+        btn = QPushButton('开始分析')
+        btn.setFixedWidth(90)
+        btn.clicked.connect(self._run)
+        top.addWidget(btn)
+        root.addLayout(top)
+
+        # ── 分隔线
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f'color: {C["border"]};')
+        root.addWidget(sep)
+
+        # ── 结果区（可滚动）
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._result_widget = QWidget()
+        self._result_layout = QVBoxLayout(self._result_widget)
+        self._result_layout.setContentsMargins(0, 4, 0, 4)
+        self._result_layout.setSpacing(6)
+        self._result_layout.addStretch()
+        scroll.setWidget(self._result_widget)
+        root.addWidget(scroll)
+
+        # ── 底部统计
+        self._summary_lbl = QLabel('')
+        self._summary_lbl.setStyleSheet(f'color: {C["fg_dim"]}; font-size: 11px;')
+        root.addWidget(self._summary_lbl)
+
+        self._populate_tags()
+
+    def _populate_tags(self):
+        self._tag_combo.clear()
+        self._tag_combo.addItem('全部文件', None)
+        tree = TagScanner.build_tree(self.store.get_txt_files())
+        for tag in sorted(tree.keys()):
+            self._tag_combo.addItem(f'#{tag}', tag)
+
+    def _get_files(self) -> list[str]:
+        tag = self._tag_combo.currentData()
+        if tag is None:
+            return self.store.get_txt_files()
+        tree = TagScanner.build_tree(self.store.get_txt_files())
+        return tree.get(tag, [])
+
+    def _run(self):
+        from collections import Counter
+        files = self._get_files()
+        counter: Counter = Counter()
+        total_files = 0
+        for fp in files:
+            try:
+                text = Path(fp).read_text('utf-8')
+                matches = FILLER_RE.findall(text)
+                counter.update(matches)
+                total_files += 1
+            except Exception:
+                pass
+
+        # 清空旧结果
+        while self._result_layout.count() > 1:
+            item = self._result_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if not counter:
+            placeholder = QLabel('未找到语气词')
+            placeholder.setStyleSheet(f'color: {C["fg_dim"]}; font-size: 13px;')
+            placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._result_layout.insertWidget(0, placeholder)
+            self._summary_lbl.setText('')
+            return
+
+        ranked = counter.most_common()
+        max_count = ranked[0][1]
+
+        for rank, (word, count) in enumerate(ranked, 1):
+            row = self._make_row(rank, word, count, max_count)
+            self._result_layout.insertWidget(rank - 1, row)
+
+        total_count = sum(counter.values())
+        self._summary_lbl.setText(
+            f'共分析 {total_files} 个文件，发现 {len(counter)} 种口头禅，合计出现 {total_count} 次'
+        )
+
+    def _make_row(self, rank: int, word: str, count: int, max_count: int) -> QWidget:
+        row = QWidget()
+        row.setStyleSheet(f'QWidget {{ background: {C["bg_input"]}; border-radius: 6px; }}')
+        h = QHBoxLayout(row)
+        h.setContentsMargins(12, 8, 12, 8)
+        h.setSpacing(10)
+
+        # 排名
+        rank_lbl = QLabel(f'{rank}')
+        rank_lbl.setFixedWidth(28)
+        rank_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        rank_lbl.setStyleSheet(f'color: {C["fg_dim"]}; font-size: 11px; background: transparent;')
+        h.addWidget(rank_lbl)
+
+        # 词
+        word_lbl = QLabel(word)
+        word_lbl.setFixedWidth(80)
+        word_lbl.setStyleSheet(f'color: {C["fg"]}; font-size: 14px; background: transparent;')
+        h.addWidget(word_lbl)
+
+        # 进度条
+        bar_container = QWidget()
+        bar_container.setStyleSheet('background: transparent;')
+        bar_h = QHBoxLayout(bar_container)
+        bar_h.setContentsMargins(0, 0, 0, 0)
+        bar = QProgressBar()
+        bar.setRange(0, max_count)
+        bar.setValue(count)
+        bar.setTextVisible(False)
+        bar.setFixedHeight(8)
+        ratio = count / max_count if max_count > 0 else 0
+        # 高频 → 深紫，低频 → 暗灰
+        bar_color = C['accent'] if ratio > 0.5 else ('#9b8cc4' if ratio > 0.2 else '#4a4060')
+        bar.setStyleSheet(f"""
+            QProgressBar {{
+                background: {C['bg_sel']}; border: none; border-radius: 4px;
+            }}
+            QProgressBar::chunk {{
+                background: {bar_color}; border-radius: 4px;
+            }}
+        """)
+        bar_h.addWidget(bar)
+        h.addWidget(bar_container, 1)
+
+        # 次数
+        count_lbl = QLabel(f'{count} 次')
+        count_lbl.setFixedWidth(60)
+        count_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        count_lbl.setStyleSheet(
+            f'color: {C["accent"] if count == max_count else C["fg_tag"]}; '
+            f'font-size: 13px; background: transparent;'
+        )
+        h.addWidget(count_lbl)
+
+        return row
+
+
 # ── 主窗口 ────────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
@@ -2276,6 +2471,7 @@ class MainWindow(QMainWindow):
         self._filler_action.setChecked(False)
         self._filler_action.triggered.connect(self._toggle_fillers)
         vm.addAction(self._filler_action)
+        _act(vm, '口头禅频率分析…', self._open_filler_analysis)
         vm.addSeparator()
         _act(vm, '刷新侧栏', self._refresh_sidebar, 'F5')
 
@@ -2335,6 +2531,15 @@ class MainWindow(QMainWindow):
     def _toggle_fillers(self):
         enabled = self._filler_action.isChecked()
         self._txt_editor._highlighter.set_show_fillers(enabled)
+
+    def _open_filler_analysis(self):
+        dlg = FillerAnalysisDialog(self.store, self)
+        geo = self.geometry()
+        dlg.move(
+            geo.x() + (geo.width()  - dlg.width())  // 2,
+            geo.y() + (geo.height() - dlg.height()) // 3,
+        )
+        dlg.exec()
 
     def _go_top(self):
         ed = self._txt_editor
