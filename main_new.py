@@ -37,7 +37,7 @@ C = {
     'bg_sidebar':  '#161819',
     'bg_input':    '#252729',
     'bg_sel':      '#2a2d30',
-    'fg':          '#dfe3df',
+    'fg':          '#e8e8e8',
     'fg_tag':      '#a0a4a0',
     'fg_file':     '#6e726e',
     'fg_dim':      '#5a5e5a',
@@ -123,7 +123,7 @@ class FileStore:
             key=lambda a: a['start'])
 
     def add_annotation(self, filepath: str, atype: str,
-                       start: int, end: int, text: str) -> dict:
+                       start: int, end: int, text: str, **kwargs) -> dict:
         annot = {
             'id':         str(uuid.uuid4()),
             'type':       atype,
@@ -132,6 +132,7 @@ class FileStore:
             'text':       text,
             'note':       '',
             'created_at': datetime.now().isoformat(timespec='seconds'),
+            **kwargs,
         }
         self.data.setdefault('annotations', {}).setdefault(filepath, []).append(annot)
         self.save()
@@ -194,6 +195,7 @@ class TagScanner:
 class AnnotBar(QFrame):
     """选中文字后弹出的浮动工具条"""
     annotate = pyqtSignal(str)
+    label    = pyqtSignal(str)   # 文字标签名
     remove   = pyqtSignal()
 
     def __init__(self):
@@ -247,6 +249,42 @@ class AnnotBar(QFrame):
             btn.clicked.connect(lambda _, t=atype: self.annotate.emit(t))
             lay.addWidget(btn)
 
+        # ── 文字标签按钮 ──────────────────────────
+        sep_lbl = QFrame()
+        sep_lbl.setFrameShape(QFrame.Shape.VLine)
+        sep_lbl.setStyleSheet(f"color: {C['border']};")
+        lay.addWidget(sep_lbl)
+
+        lbl_btn = QPushButton('#')
+        lbl_btn.setFixedSize(26, 26)
+        lbl_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        lbl_btn.setToolTip('文字标签')
+        lbl_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {C['bg_sel']}; color: {C['accent']};
+                border-radius: 4px; border: none; font-size: 14px; font-weight: bold;
+            }}
+            QPushButton:hover {{ background: {C['accent']}; color: white; }}
+        """)
+        lbl_btn.clicked.connect(self._toggle_label_input)
+        lay.addWidget(lbl_btn)
+
+        self._label_input = QLineEdit()
+        self._label_input.setPlaceholderText('标签名…')
+        self._label_input.setFixedWidth(88)
+        self._label_input.setFixedHeight(26)
+        self._label_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {C['bg']}; color: {C['fg']};
+                border: 1px solid {C['accent']}; border-radius: 4px;
+                padding: 0 6px; font-size: 13px;
+            }}
+        """)
+        self._label_input.returnPressed.connect(self._emit_label)
+        self._label_input.hide()
+        lay.addWidget(self._label_input)
+
+        # ── 删除按钮 ──────────────────────────────
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.VLine)
         sep.setStyleSheet(f"color: {C['border']};")
@@ -263,6 +301,23 @@ class AnnotBar(QFrame):
         """)
         del_btn.clicked.connect(self.remove.emit)
         lay.addWidget(del_btn)
+
+    def _toggle_label_input(self):
+        if self._label_input.isHidden():
+            self._label_input.show()
+            self._label_input.setFocus()
+            self._label_input.clear()
+            self.adjustSize()
+        else:
+            self._label_input.hide()
+            self.adjustSize()
+
+    def _emit_label(self):
+        text = self._label_input.text().strip()
+        self._label_input.hide()
+        self.adjustSize()
+        if text:
+            self.label.emit(text)
 
 
 # ── 标注面板（右侧卡片列表）─────────────────────────────────────────────
@@ -304,8 +359,13 @@ class AnnotPanel(QScrollArea):
             self._cards[annot['id']] = card
 
     def _make_card(self, annot: dict) -> QFrame:
-        _, dot = C.get(annot['type'], (None, C['accent']))
-        dot = dot or C['accent']
+        if annot['type'] == 'label':
+            dot = '#c4b0f8'
+            card_label = annot.get('label_text', '标签')
+        else:
+            _, dot = C.get(annot['type'], (None, C['accent']))
+            dot = dot or C['accent']
+            card_label = ANNOT_LABEL.get(annot['type'], annot['type'])
         card = QFrame()
         card.setStyleSheet(f"""
             QFrame {{
@@ -320,8 +380,17 @@ class AnnotPanel(QScrollArea):
 
         # 顶栏：类型标签 + 删除按钮
         top = QHBoxLayout()
-        type_lbl = QLabel(ANNOT_LABEL.get(annot['type'], annot['type']))
-        type_lbl.setStyleSheet(f"color: {dot}; font-size: 11px;")
+        if annot['type'] == 'label':
+            # 以 pill 样式显示标签名
+            pill = QLabel(f'  # {card_label}  ')
+            pill.setStyleSheet(f"""
+                background: #1e1040; color: {dot};
+                border-radius: 3px; font-size: 11px; padding: 1px 0;
+            """)
+            type_lbl = pill
+        else:
+            type_lbl = QLabel(card_label)
+            type_lbl.setStyleSheet(f"color: {dot}; font-size: 11px;")
         top.addWidget(type_lbl)
         top.addStretch()
         del_btn = QPushButton('✕')
@@ -465,7 +534,7 @@ class TxtEditor(QTextEdit):
         self.setStyleSheet(f"""
             QTextEdit {{
                 background: {C['bg']}; color: {C['fg']};
-                border: none; padding: 0;
+                border: none; padding: 48px 120px;
                 selection-background-color: #4a4a55;
                 selection-color: #e0e0e0;
             }}
@@ -563,18 +632,25 @@ class TxtEditor(QTextEdit):
         cur.setPosition(min(annot['end'],   doc.characterCount() - 1),
                         QTextCursor.MoveMode.KeepAnchor)
         fmt = QTextCharFormat()
-        bg, fg = C.get(annot['type'], (None, None))
-        if bg:
-            fmt.setBackground(QColor(bg))
-        if fg and annot['type'] not in ('bold', 'underline'):
-            fmt.setForeground(QColor(fg))
-        if annot['type'] == 'bold':
-            fmt.setFontWeight(QFont.Weight.Bold)
-        if annot['type'] == 'underline':
+        fmt.setFont(self.font())
+        fmt.setForeground(QColor(C['fg']))
+        if annot['type'] == 'label':
+            fmt.setBackground(QColor('#1e1040'))
+            fmt.setForeground(QColor('#c4b0f8'))
             fmt.setFontUnderline(True)
-        cur.mergeCharFormat(fmt)
+        else:
+            bg, fg = C.get(annot['type'], (None, None))
+            if bg:
+                fmt.setBackground(QColor(bg))
+            if fg and annot['type'] not in ('bold', 'underline'):
+                fmt.setForeground(QColor(fg))
+            if annot['type'] == 'bold':
+                fmt.setFontWeight(QFont.Weight.Bold)
+            if annot['type'] == 'underline':
+                fmt.setFontUnderline(True)
+        cur.setCharFormat(fmt)
 
-    def annotate(self, atype: str) -> dict | None:
+    def annotate(self, atype: str, label_text: str = '') -> dict | None:
         if not self._fp:
             return None
         cur = self.textCursor()
@@ -583,7 +659,8 @@ class TxtEditor(QTextEdit):
         start = min(cur.position(), cur.anchor())
         end   = max(cur.position(), cur.anchor())
         text  = cur.selectedText().replace('\u2029', '\n')
-        annot = self.store.add_annotation(self._fp, atype, start, end, text)
+        extra = {'label_text': label_text} if label_text else {}
+        annot = self.store.add_annotation(self._fp, atype, start, end, text, **extra)
         self._apply_fmt(annot)
         return annot
 
@@ -676,26 +753,6 @@ class TxtEditor(QTextEdit):
         menu.addAction(a_all)
 
         menu.exec(event.globalPos())
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if getattr(self, '_in_resize', False):
-            return
-        self._in_resize = True
-        self._update_margins()
-        self._in_resize = False
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        QTimer.singleShot(0, self._update_margins)
-
-    def _update_margins(self):
-        content_w = 600
-        w = self.width()
-        if w <= 0:
-            return
-        side = max(60, (w - content_w) // 2)
-        self.setViewportMargins(side, 48, side, 16)
 
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)
@@ -1051,18 +1108,6 @@ class MainWindow(QMainWindow):
             f"color: {C['fg_dim']}; font-size: 13px; font-weight: bold;")
         _top_lay.addWidget(_lbl)
         _top_lay.addStretch()
-        _import_btn = QPushButton('+')
-        _import_btn.setFixedSize(28, 28)
-        _import_btn.setToolTip('导入文件 / 设置目录')
-        _import_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {C['bg_input']}; color: {C['fg_dim']};
-                border: none; border-radius: 14px; font-size: 18px;
-            }}
-            QPushButton:hover {{ background: {C['bg_sel']}; color: {C['fg']}; }}
-        """)
-        _import_btn.clicked.connect(self._show_import_menu)
-        _top_lay.addWidget(_import_btn)
         sw_lay.addWidget(_top)
 
         self._sidebar = Sidebar(self.store)
@@ -1135,6 +1180,7 @@ class MainWindow(QMainWindow):
         # 浮动标注工具条
         self._annot_bar = AnnotBar()
         self._annot_bar.annotate.connect(self._do_annotate)
+        self._annot_bar.label.connect(self._do_label)
         self._annot_bar.remove.connect(self._do_remove_annot)
         self._annot_bar.hide()
 
@@ -1237,19 +1283,6 @@ class MainWindow(QMainWindow):
         self._sidebar.refresh(txt_files)
 
     # ── 文件操作 ──────────────────────────────────────────────
-    def _show_import_menu(self):
-        menu = QMenu(self)
-        menu.setStyleSheet(f"""
-            QMenu {{
-                background: {C['bg_input']}; color: {C['fg']};
-                border: 1px solid {C['border']}; border-radius: 6px; padding: 4px;
-            }}
-            QMenu::item {{ padding: 6px 20px; border-radius: 4px; }}
-            QMenu::item:selected {{ background: {C['bg_sel']}; }}
-        """)
-        btn = self.sender()
-        menu.exec(btn.mapToGlobal(QPoint(0, btn.height())))
-
     def _open_file(self, path: str):
         self._fp = path
         self._annot_bar.hide()
@@ -1341,6 +1374,12 @@ class MainWindow(QMainWindow):
 
     def _do_annotate(self, atype: str):
         annot = self._txt_editor.annotate(atype)
+        if annot:
+            self._annot_bar.hide()
+            self._annot_panel.refresh(self._fp)
+
+    def _do_label(self, label_text: str):
+        annot = self._txt_editor.annotate('label', label_text)
         if annot:
             self._annot_bar.hide()
             self._annot_panel.refresh(self._fp)
