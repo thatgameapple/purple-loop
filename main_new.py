@@ -598,7 +598,7 @@ class TxtEditor(QTextEdit):
                 border: 1px solid {C['border']}; border-radius: 6px; padding: 4px;
             }}
             QMenu::item {{ padding: 6px 20px; border-radius: 4px; }}
-            QMenu::item:selected {{ background: #383c40; color: {C['fg']}; }}
+            QMenu::item:selected {{ background: #2a3a5a; color: {C['fg']}; }}
             QMenu::item:disabled {{ color: {C['fg_dim']}; }}
             QMenu::separator {{ background: {C['border']}; height: 1px; margin: 4px 8px; }}
         """)
