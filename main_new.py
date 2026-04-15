@@ -945,6 +945,19 @@ class TxtEditor(QTextEdit):
             if event.key() in key_map:
                 self.window()._do_annotate(key_map[event.key()])
                 return
+            # Cmd+↑ 到顶，Cmd+↓ 到底
+            if event.key() == Qt.Key.Key_Up:
+                self.verticalScrollBar().setValue(0)
+                c = QTextCursor(self.document())
+                c.movePosition(QTextCursor.MoveOperation.Start)
+                self.setTextCursor(c)
+                return
+            if event.key() == Qt.Key.Key_Down:
+                self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
+                c = QTextCursor(self.document())
+                c.movePosition(QTextCursor.MoveOperation.End)
+                self.setTextCursor(c)
+                return
         super().keyPressEvent(event)
 
 
@@ -2225,6 +2238,9 @@ class MainWindow(QMainWindow):
         vm.addSeparator()
         _act(vm, '禅定模式', self._toggle_zen, 'Ctrl+Shift+Z')
         vm.addSeparator()
+        _act(vm, '跳到文章开头', self._go_top,    'Ctrl+Up')
+        _act(vm, '跳到文章末尾', self._go_bottom, 'Ctrl+Down')
+        vm.addSeparator()
         _act(vm, '刷新侧栏', self._refresh_sidebar, 'F5')
 
     def _apply_theme(self):
@@ -2279,6 +2295,20 @@ class MainWindow(QMainWindow):
             self.statusBar().show()
             self._progress_bar.show()
             self._txt_editor._count_lbl.show()
+
+    def _go_top(self):
+        ed = self._txt_editor
+        ed.verticalScrollBar().setValue(0)
+        c = QTextCursor(ed.document())
+        c.movePosition(QTextCursor.MoveOperation.Start)
+        ed.setTextCursor(c)
+
+    def _go_bottom(self):
+        ed = self._txt_editor
+        ed.verticalScrollBar().setValue(ed.verticalScrollBar().maximum())
+        c = QTextCursor(ed.document())
+        c.movePosition(QTextCursor.MoveOperation.End)
+        ed.setTextCursor(c)
 
     # ── 侧栏刷新 ──────────────────────────────────────────────
     def _refresh_sidebar(self):
