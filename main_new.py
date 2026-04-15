@@ -1542,17 +1542,14 @@ class MainWindow(QMainWindow):
     def _toggle_zen(self):
         self._zen = not self._zen
         if self._zen:
-            # 记录标注面板状态，隐藏所有 chrome
             self._pre_zen_annot = self._annot_panel_action.isChecked()
-            self._split.widget(0).hide()          # 左侧边栏
+            self._split.widget(0).hide()
             self._annot_panel.hide()
             self._annot_panel_action.setChecked(False)
             self.menuBar().hide()
             self.statusBar().hide()
             self._progress_bar.hide()
             self._txt_editor._count_lbl.hide()
-            # 全屏
-            self.showFullScreen()
         else:
             self._split.widget(0).show()
             if self._pre_zen_annot:
@@ -1562,7 +1559,6 @@ class MainWindow(QMainWindow):
             self.statusBar().show()
             self._progress_bar.show()
             self._txt_editor._count_lbl.show()
-            self.showNormal()
 
     # ── 侧栏刷新 ──────────────────────────────────────────────
     def _refresh_sidebar(self):
