@@ -42,7 +42,7 @@ C = {
     'fg_tag':      '#a0a4a0',
     'fg_file':     '#6e726e',
     'fg_dim':      '#5a5e5a',
-    'accent':      '#5b9cf6',
+    'accent':      '#bd93f9',
     'border':      '#2a2d30',
     'save_green':  '#1db070',
     # 标注颜色 (bg, fg/dot)
@@ -1060,7 +1060,7 @@ class Sidebar(QTreeWidget):
                 pi.setData(0, Qt.ItemDataRole.UserRole, ('tag_pin', tp))
                 pi.setForeground(0, QColor(C['accent']))
                 pi.setFont(0, QFont('PingFang SC', 13))
-                pi.setBackground(0, QColor('#1c2a3a'))
+                pi.setBackground(0, QColor('#1e1535'))
             pin_hdr.setExpanded(True)
 
         # ── 标签树 ───────────────────────────────────────────
