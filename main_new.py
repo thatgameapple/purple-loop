@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QTextEdit, QScrollArea, QLabel, QVBoxLayout, QHBoxLayout,
     QPushButton, QLineEdit, QFrame, QMenu, QFileDialog, QInputDialog,
     QMessageBox, QSizePolicy, QAbstractScrollArea, QDialog, QButtonGroup,
-    QProgressBar
+    QProgressBar, QComboBox
 )
 from PyQt6.QtGui import (
     QColor, QFont, QTextCharFormat, QTextCursor, QTextDocument,
@@ -1167,6 +1167,307 @@ class SearchBar(QFrame):
         self._count_lbl.setText(f'{n} 处' if n else '')
 
 
+# ── 全局搜索对话框 ────────────────────────────────────────────────────────
+
+class GlobalSearchDialog(QDialog):
+    """跨文件全局搜索 + 标签/标注筛选"""
+    open_file = pyqtSignal(str, str)   # filepath, keyword
+
+    _MAX_RECENT = 8
+    _SNIPPET_LEN = 60
+
+    def __init__(self, store: FileStore, parent=None):
+        super().__init__(parent, Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.store = store
+        self._recent: list[str] = store.get_config('recent_searches', [])
+        self._all_tags: list[str] = []
+        self.setMinimumWidth(560)
+
+        outer = QFrame(self)
+        outer.setStyleSheet(f"""
+            QFrame {{
+                background: {C['bg_input']};
+                border: 1px solid {C['border']};
+                border-radius: 12px;
+            }}
+        """)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.addWidget(outer)
+
+        lay = QVBoxLayout(outer)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        # ── 搜索框 ───────────────────────────────────────────
+        search_row = QFrame()
+        search_row.setStyleSheet(
+            f"background: transparent; border-bottom: 1px solid {C['border']};")
+        sr_lay = QHBoxLayout(search_row)
+        sr_lay.setContentsMargins(16, 12, 12, 12)
+        sr_lay.setSpacing(8)
+
+        icon = QLabel('🔍')
+        icon.setStyleSheet("background: transparent; font-size: 15px;")
+        sr_lay.addWidget(icon)
+
+        self._input = QLineEdit()
+        self._input.setPlaceholderText('搜索所有文件…')
+        self._input.setStyleSheet(f"""
+            QLineEdit {{
+                background: transparent; color: {C['fg']};
+                border: none; font-size: 16px;
+            }}
+        """)
+        self._input.textChanged.connect(self._on_text)
+        self._input.returnPressed.connect(self._run_search)
+        sr_lay.addWidget(self._input, 1)
+
+        # 筛选按钮
+        self._filter_btn = QPushButton('≡')
+        self._filter_btn.setFixedSize(28, 28)
+        self._filter_btn.setCheckable(True)
+        self._filter_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._filter_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {C['bg_sel']}; color: {C['fg_dim']};
+                border: none; border-radius: 6px; font-size: 16px;
+            }}
+            QPushButton:checked {{ background: {C['accent']}; color: white; }}
+        """)
+        self._filter_btn.toggled.connect(self._toggle_filter)
+        sr_lay.addWidget(self._filter_btn)
+        lay.addWidget(search_row)
+
+        # ── 筛选面板（默认折叠）───────────────────────────
+        self._filter_panel = QFrame()
+        self._filter_panel.setStyleSheet(
+            f"background: transparent; border-bottom: 1px solid {C['border']};")
+        fp_lay = QHBoxLayout(self._filter_panel)
+        fp_lay.setContentsMargins(16, 10, 16, 10)
+        fp_lay.setSpacing(10)
+
+        # 标签筛选
+        tag_lbl = QLabel('标签')
+        tag_lbl.setStyleSheet(f"color: {C['fg_dim']}; font-size: 12px;")
+        fp_lay.addWidget(tag_lbl)
+
+        self._tag_combo = QComboBox()
+        self._tag_combo.addItem('全部标签', None)
+        self._tag_combo.setStyleSheet(f"""
+            QComboBox {{
+                background: {C['bg_sel']}; color: {C['fg']};
+                border: 1px solid {C['border']}; border-radius: 6px;
+                padding: 4px 10px; font-size: 13px; min-width: 100px;
+            }}
+            QComboBox::drop-down {{ border: none; }}
+            QComboBox QAbstractItemView {{
+                background: {C['bg_input']}; color: {C['fg']};
+                border: 1px solid {C['border']}; selection-background-color: {C['bg_sel']};
+            }}
+        """)
+        fp_lay.addWidget(self._tag_combo)
+
+        fp_lay.addSpacing(16)
+
+        # 有标注筛选
+        self._has_annot = QPushButton('有标注')
+        self._has_annot.setCheckable(True)
+        self._has_annot.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._has_annot.setStyleSheet(f"""
+            QPushButton {{
+                background: {C['bg_sel']}; color: {C['fg_dim']};
+                border: none; border-radius: 6px; padding: 4px 12px; font-size: 12px;
+            }}
+            QPushButton:checked {{ background: {C['accent']}; color: white; }}
+        """)
+        fp_lay.addWidget(self._has_annot)
+
+        fp_lay.addStretch()
+
+        reset_btn = QPushButton('重置')
+        reset_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {C['fg_dim']};
+                border: none; font-size: 12px;
+            }}
+            QPushButton:hover {{ color: {C['fg']}; }}
+        """)
+        reset_btn.clicked.connect(self._reset_filter)
+        fp_lay.addWidget(reset_btn)
+
+        self._filter_panel.hide()
+        lay.addWidget(self._filter_panel)
+
+        # ── 结果 / 最近搜索列表 ───────────────────────────
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setMaximumHeight(380)
+        self._scroll.setStyleSheet(f"""
+            QScrollArea {{ background: transparent; border: none; }}
+            QScrollBar:vertical {{ background: transparent; width: 3px; }}
+            QScrollBar::handle:vertical {{ background: #444448; border-radius: 1px; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+        """)
+        self._list_widget = QWidget()
+        self._list_widget.setStyleSheet("background: transparent;")
+        self._list_lay = QVBoxLayout(self._list_widget)
+        self._list_lay.setContentsMargins(8, 6, 8, 8)
+        self._list_lay.setSpacing(2)
+        self._list_lay.addStretch()
+        self._scroll.setWidget(self._list_widget)
+        lay.addWidget(self._scroll)
+
+        self._show_recent()
+
+    def _toggle_filter(self, checked: bool):
+        self._filter_panel.setVisible(checked)
+        self.adjustSize()
+
+    def _reset_filter(self):
+        self._tag_combo.setCurrentIndex(0)
+        self._has_annot.setChecked(False)
+
+    def populate_tags(self, tags: list[str]):
+        self._all_tags = tags
+        self._tag_combo.clear()
+        self._tag_combo.addItem('全部标签', None)
+        for t in sorted(tags):
+            self._tag_combo.addItem(f'#{t}', t)
+
+    def _on_text(self, text: str):
+        if len(text) >= 1:
+            self._run_search()
+        else:
+            self._show_recent()
+
+    def _run_search(self):
+        kw = self._input.text().strip()
+        if not kw:
+            self._show_recent()
+            return
+        # 保存到最近搜索
+        if kw in self._recent:
+            self._recent.remove(kw)
+        self._recent.insert(0, kw)
+        self._recent = self._recent[:self._MAX_RECENT]
+        self.store.set_config('recent_searches', self._recent)
+
+        # 筛选参数
+        tag_filter = self._tag_combo.currentData()
+        annot_filter = self._has_annot.isChecked()
+
+        results = []
+        for fp in self.store.get_txt_files():
+            # 标签筛选
+            if tag_filter:
+                tags = TagScanner.scan(fp)
+                if tag_filter not in tags:
+                    continue
+            # 标注筛选
+            if annot_filter and not self.store.get_annotations(fp):
+                continue
+            # 关键词搜索
+            try:
+                text = Path(fp).read_text('utf-8')
+            except Exception:
+                continue
+            idx = text.lower().find(kw.lower())
+            if idx < 0:
+                continue
+            start = max(0, idx - 20)
+            snippet = text[start: start + self._SNIPPET_LEN].replace('\n', ' ')
+            if start > 0:
+                snippet = '…' + snippet
+            results.append((fp, snippet, idx))
+
+        self._render_results(kw, results)
+
+    def _show_recent(self):
+        self._clear_list()
+        if not self._recent:
+            return
+        hdr = QLabel('最近搜索')
+        hdr.setStyleSheet(f"color: {C['fg_dim']}; font-size: 11px; padding: 4px 8px 2px;")
+        self._list_lay.insertWidget(self._list_lay.count() - 1, hdr)
+        for kw in self._recent:
+            row = self._make_recent_row(kw)
+            self._list_lay.insertWidget(self._list_lay.count() - 1, row)
+
+    def _make_recent_row(self, kw: str) -> QFrame:
+        row = QFrame()
+        row.setCursor(Qt.CursorShape.PointingHandCursor)
+        row.setStyleSheet(f"""
+            QFrame {{ background: transparent; border-radius: 6px; }}
+            QFrame:hover {{ background: {C['bg_sel']}; }}
+        """)
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(10, 6, 10, 6)
+        lbl = QLabel(kw)
+        lbl.setStyleSheet(f"color: {C['fg_file']}; font-size: 14px;")
+        lay.addWidget(lbl)
+        lay.addStretch()
+        row.mousePressEvent = lambda e: (
+            self._input.setText(kw) if e.button() == Qt.MouseButton.LeftButton else None)
+        return row
+
+    def _render_results(self, kw: str, results: list):
+        self._clear_list()
+        if not results:
+            lbl = QLabel('无匹配结果')
+            lbl.setStyleSheet(f"color: {C['fg_dim']}; font-size: 13px; padding: 12px;")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._list_lay.insertWidget(0, lbl)
+            return
+        hdr = QLabel(f'{len(results)} 个文件')
+        hdr.setStyleSheet(f"color: {C['fg_dim']}; font-size: 11px; padding: 4px 8px 2px;")
+        self._list_lay.insertWidget(self._list_lay.count() - 1, hdr)
+        for fp, snippet, _ in results[:30]:
+            card = self._make_result_card(fp, snippet, kw)
+            self._list_lay.insertWidget(self._list_lay.count() - 1, card)
+
+    def _make_result_card(self, fp: str, snippet: str, kw: str) -> QFrame:
+        card = QFrame()
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
+        card.setStyleSheet(f"""
+            QFrame {{ background: transparent; border-radius: 6px; padding: 2px; }}
+            QFrame:hover {{ background: {C['bg_sel']}; }}
+        """)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(10, 7, 10, 7)
+        lay.setSpacing(3)
+
+        name_lbl = QLabel(Path(fp).stem)
+        name_lbl.setStyleSheet(f"color: {C['fg']}; font-size: 14px;")
+        lay.addWidget(name_lbl)
+
+        # 高亮关键词
+        hi = snippet.replace(kw, f'<span style="color:{C["accent"]}">{kw}</span>')
+        snip_lbl = QLabel(hi)
+        snip_lbl.setStyleSheet(f"color: {C['fg_file']}; font-size: 12px;")
+        snip_lbl.setTextFormat(Qt.TextFormat.RichText)
+        lay.addWidget(snip_lbl)
+
+        card.mousePressEvent = lambda e, f=fp, k=kw: (
+            (self.open_file.emit(f, k), self.accept())
+            if e.button() == Qt.MouseButton.LeftButton else None)
+        return card
+
+    def _clear_list(self):
+        while self._list_lay.count() > 1:
+            item = self._list_lay.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.reject()
+        else:
+            super().keyPressEvent(event)
+
+
 # ── 文字标签弹窗（颜色 + 可选标签名）────────────────────────────────────
 
 class LabelDialog(QDialog):
@@ -1519,7 +1820,8 @@ class MainWindow(QMainWindow):
         # 视图
         vm = mb.addMenu('视图')
         vm.setStyleSheet(_ms)
-        _act(vm, '搜索', self._toggle_search, 'Ctrl+F')
+        _act(vm, '全局搜索', self._open_global_search, 'Ctrl+K')
+        _act(vm, '当前文件搜索', self._toggle_search, 'Ctrl+F')
         vm.addSeparator()
         self._annot_panel_action = QAction('显示标注面板', self)
         self._annot_panel_action.setShortcut(QKeySequence('Ctrl+\\'))
@@ -1537,6 +1839,31 @@ class MainWindow(QMainWindow):
         pal = self.palette()
         pal.setColor(QPalette.ColorRole.Window, QColor(C['bg']))
         self.setPalette(pal)
+
+    # ── 全局搜索 ──────────────────────────────────────────────
+    def _open_global_search(self):
+        dlg = GlobalSearchDialog(self.store, self)
+        # 注入所有标签
+        all_tags = list(TagScanner.build_tree(self.store.get_txt_files()).keys())
+        dlg.populate_tags(all_tags)
+        dlg.open_file.connect(self._global_open_file)
+        # 居中显示在窗口
+        dlg.adjustSize()
+        geo = self.geometry()
+        dlg.move(
+            geo.x() + (geo.width()  - dlg.width())  // 2,
+            geo.y() + (geo.height() - dlg.height()) // 3,
+        )
+        dlg.exec()
+
+    def _global_open_file(self, fp: str, kw: str):
+        """打开文件并高亮关键词"""
+        self._open_file(fp)
+        if kw:
+            QTimer.singleShot(100, lambda: (
+                self._search_bar.show(),
+                self._do_search(kw),
+            ))
 
     # ── 禅定模式 ──────────────────────────────────────────────
     def _toggle_zen(self):
