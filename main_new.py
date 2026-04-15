@@ -42,7 +42,7 @@ C = {
     'fg_tag':      '#a0a4a0',
     'fg_file':     '#6e726e',
     'fg_dim':      '#5a5e5a',
-    'accent':      '#bd93f9',
+    'accent':      '#7c6fa8',
     'border':      '#2a2d30',
     'save_green':  '#1db070',
     # 标注颜色 (bg, fg/dot)
