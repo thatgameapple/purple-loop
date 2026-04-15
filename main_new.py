@@ -1297,7 +1297,8 @@ class MainWindow(QMainWindow):
         self._fp:  str | None = None
         self._search_matches: list = []
         self._search_idx = -1
-        self._pending_annot_id: str | None = None  # 工具条对应的标注 id
+        self._pending_annot_id: str | None = None
+        self._zen = False
 
         self._load_fonts()
         self._build_ui()
@@ -1527,6 +1528,8 @@ class MainWindow(QMainWindow):
         self._annot_panel_action.triggered.connect(self._toggle_annot_panel)
         vm.addAction(self._annot_panel_action)
         vm.addSeparator()
+        _act(vm, '禅定模式', self._toggle_zen, 'Ctrl+Shift+Z')
+        vm.addSeparator()
         _act(vm, '刷新侧栏', self._refresh_sidebar, 'F5')
 
     def _apply_theme(self):
@@ -1534,6 +1537,32 @@ class MainWindow(QMainWindow):
         pal = self.palette()
         pal.setColor(QPalette.ColorRole.Window, QColor(C['bg']))
         self.setPalette(pal)
+
+    # ── 禅定模式 ──────────────────────────────────────────────
+    def _toggle_zen(self):
+        self._zen = not self._zen
+        if self._zen:
+            # 记录标注面板状态，隐藏所有 chrome
+            self._pre_zen_annot = self._annot_panel_action.isChecked()
+            self._split.widget(0).hide()          # 左侧边栏
+            self._annot_panel.hide()
+            self._annot_panel_action.setChecked(False)
+            self.menuBar().hide()
+            self.statusBar().hide()
+            self._progress_bar.hide()
+            self._txt_editor._count_lbl.hide()
+            # 全屏
+            self.showFullScreen()
+        else:
+            self._split.widget(0).show()
+            if self._pre_zen_annot:
+                self._annot_panel.show()
+                self._annot_panel_action.setChecked(True)
+            self.menuBar().show()
+            self.statusBar().show()
+            self._progress_bar.show()
+            self._txt_editor._count_lbl.show()
+            self.showNormal()
 
     # ── 侧栏刷新 ──────────────────────────────────────────────
     def _refresh_sidebar(self):
@@ -1756,7 +1785,9 @@ class MainWindow(QMainWindow):
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
-            if self._search_bar.isVisible():
+            if self._zen:
+                self._toggle_zen()
+            elif self._search_bar.isVisible():
                 self._close_search()
             elif self._note_bar.isVisible():
                 self._note_bar.hide()
