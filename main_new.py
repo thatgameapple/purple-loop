@@ -655,6 +655,14 @@ class TxtEditor(QTextEdit):
 
     def keyPressEvent(self, event):
         if event.modifiers() & MOD:
+            if event.key() == Qt.Key.Key_C:
+                self.copy(); return
+            if event.key() == Qt.Key.Key_V:
+                self.paste(); return
+            if event.key() == Qt.Key.Key_X:
+                self.cut(); return
+            if event.key() == Qt.Key.Key_A:
+                self.selectAll(); return
             key_map = {
                 Qt.Key.Key_1: 'hl_yellow',
                 Qt.Key.Key_2: 'hl_green',
