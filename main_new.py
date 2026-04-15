@@ -1178,25 +1178,19 @@ class GlobalSearchDialog(QDialog):
 
     def __init__(self, store: FileStore, parent=None):
         super().__init__(parent, Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.store = store
         self._recent: list[str] = store.get_config('recent_searches', [])
         self._all_tags: list[str] = []
         self.setMinimumWidth(560)
-
-        outer = QFrame(self)
-        outer.setStyleSheet(f"""
-            QFrame {{
+        self.setStyleSheet(f"""
+            QDialog {{
                 background: {C['bg_input']};
                 border: 1px solid {C['border']};
                 border-radius: 12px;
             }}
         """)
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.addWidget(outer)
 
-        lay = QVBoxLayout(outer)
+        lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
 
@@ -1482,22 +1476,16 @@ class LabelDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent, Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self._color_type = 'hl_yellow'
-
-        outer = QFrame(self)
-        outer.setStyleSheet(f"""
-            QFrame {{
+        self.setStyleSheet(f"""
+            QDialog {{
                 background: {C['bg_input']};
                 border: 1px solid {C['border']};
                 border-radius: 10px;
             }}
         """)
-        wrap = QVBoxLayout(self)
-        wrap.setContentsMargins(0, 0, 0, 0)
-        wrap.addWidget(outer)
 
-        lay = QVBoxLayout(outer)
+        lay = QVBoxLayout(self)
         lay.setContentsMargins(16, 14, 16, 14)
         lay.setSpacing(10)
 
