@@ -1489,6 +1489,10 @@ class GlobalSearchDialog(QDialog):
         body_split.addWidget(right)
 
         body_split.setSizes([280, 620])
+        body_split.setCollapsible(0, False)
+        body_split.setCollapsible(1, False)
+        left.setMinimumWidth(200)
+        right.setMinimumWidth(340)
         root.addWidget(body_split, 1)
 
         self._show_recent()
