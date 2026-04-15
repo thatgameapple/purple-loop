@@ -651,8 +651,8 @@ class TxtEditor(QTextEdit):
         cur = QTextCursor(self.document())
         cur.select(QTextCursor.SelectionType.Document)
         blk_fmt = QTextBlockFormat()
-        blk_fmt.setLineHeight(175, 1)       # 1.75 倍行距（研究推荐深色背景）
-        blk_fmt.setBottomMargin(16)         # 段落间距 ~1em（16px）
+        blk_fmt.setLineHeight(165, 1)       # 1.65 倍行距
+        blk_fmt.setBottomMargin(8)          # 段落间距 0.5em（有层次但不散）
         cur.setBlockFormat(blk_fmt)
 
     def load_file(self, path: str):
