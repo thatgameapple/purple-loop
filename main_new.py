@@ -960,6 +960,7 @@ class Sidebar(QTreeWidget):
         super().__init__(parent)
         self.store   = store
         self._txt_files: list[str] = []
+        self._persist_key = 'sidebar_expanded'  # store config key
 
         self.setHeaderHidden(True)
         self.setIndentation(16)
@@ -990,6 +991,8 @@ class Sidebar(QTreeWidget):
         self.itemDoubleClicked.connect(self._on_double_click)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_ctx)
+        self.itemExpanded.connect(self._on_expand_change)
+        self.itemCollapsed.connect(self._on_expand_change)
 
         # 拖放
         self.setDragEnabled(True)
@@ -997,9 +1000,20 @@ class Sidebar(QTreeWidget):
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QTreeWidget.DragDropMode.InternalMove)
 
+    def _on_expand_change(self, _item=None):
+        """展开/收起时保存状态到 store"""
+        self.store.set_config(self._persist_key, list(self._save_expanded()))
+
     def refresh(self, txt_files: list[str]):
         self._txt_files = txt_files
+        # 优先用当前内存状态，其次从 store 读取持久状态
         expanded = self._save_expanded()
+        if not expanded:
+            saved = self.store.get_config(self._persist_key, None)
+            if saved is not None:
+                expanded = set(saved)
+            else:
+                expanded = None   # None = 首次，默认全展开
         self.clear()
 
         tag_tree   = TagScanner.build_tree(txt_files)
@@ -1053,7 +1067,7 @@ class Sidebar(QTreeWidget):
                 fi.setData(0, Qt.ItemDataRole.UserRole, ('file', fp))
                 fi.setForeground(0, QColor(C['fg_file']))
 
-        self._restore_expanded(expanded)
+        self._restore_expanded(expanded)  # None = 全展开（首次启动）
 
     def _on_double_click(self, item: QTreeWidgetItem, col: int):
         data = item.data(0, Qt.ItemDataRole.UserRole)
@@ -1072,11 +1086,13 @@ class Sidebar(QTreeWidget):
             walk(self.topLevelItem(i))
         return result
 
-    def _restore_expanded(self, expanded: set):
+    def _restore_expanded(self, expanded):
+        """expanded=None 时默认全部展开（首次启动），否则按记录恢复"""
         def walk(item):
             data = item.data(0, Qt.ItemDataRole.UserRole)
             if data and data[0] == 'tag':
-                item.setExpanded(data[1] in expanded or True)  # 默认展开
+                should = (expanded is None) or (data[1] in expanded)
+                item.setExpanded(should)
             for i in range(item.childCount()):
                 walk(item.child(i))
         for i in range(self.topLevelItemCount()):
