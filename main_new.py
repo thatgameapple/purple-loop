@@ -1582,7 +1582,7 @@ class GlobalSearchDialog(QDialog):
                 background: {C['accent']}; color: white;
                 border: none; border-radius: 5px; padding: 6px 16px; font-size: 13px;
             }}
-            QPushButton:hover {{ background: #6aaaf8; }}
+            QPushButton:hover {{ background: #9b8cc4; }}
         """)
         open_btn.clicked.connect(self._open_selected)
         pf_lay.addWidget(open_btn)
@@ -1973,7 +1973,7 @@ class LabelDialog(QDialog):
                 background: {C['accent']}; color: white;
                 border: none; border-radius: 6px; font-size: 13px;
             }}
-            QPushButton:hover {{ background: #6aaaf8; }}
+            QPushButton:hover {{ background: #9b8cc4; }}
         """)
         ok.clicked.connect(self.accept)
         btn_row.addWidget(cancel)
