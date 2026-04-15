@@ -1127,7 +1127,7 @@ class SearchPanel(QFrame):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(300)
+        self.setFixedWidth(420)
         self.setStyleSheet(f"""
             QFrame#SearchPanel {{
                 background: {C['bg_input']};
@@ -1200,7 +1200,7 @@ class SearchPanel(QFrame):
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._scroll.setMaximumHeight(340)
+        self._scroll.setMaximumHeight(520)
         self._scroll.setStyleSheet(f"""
             QScrollArea {{ background: transparent; border: none; }}
             QScrollBar:vertical {{ background: transparent; width: 3px; }}
@@ -1255,19 +1255,21 @@ class SearchPanel(QFrame):
             self._list_lay.insertWidget(self._list_lay.count() - 1, row)
 
     def _make_row(self, idx: int, pos: int, doc, kw: str) -> QFrame:
-        from PyQt6.QtGui import QTextCursor as _TC
-        cur = _TC(doc)
-        cur.setPosition(pos)
-        cur.select(_TC.SelectionType.LineUnderCursor)
-        line = cur.selectedText().strip()[:60]
+        # 取关键词前后各 40 字的上下文
+        full = doc.toPlainText()
+        s = max(0, pos - 40)
+        e = min(len(full), pos + len(kw) + 60)
+        snippet = ('…' if s > 0 else '') + full[s:e].replace('\n', ' ')
+        line = snippet
         # 高亮 kw
         lo = line.lower().find(kw.lower())
         if lo >= 0:
-            line = (line[:lo]
+            esc_pre = line[:lo].replace('<', '&lt;')
+            esc_mid = line[lo:lo+len(kw)].replace('<', '&lt;')
+            esc_aft = line[lo+len(kw):].replace('<', '&lt;')
+            line = (esc_pre
                     + f'<span style="color:{C["accent"]};font-weight:bold">'
-                    + line[lo:lo+len(kw)]
-                    + '</span>'
-                    + line[lo+len(kw):])
+                    + esc_mid + '</span>' + esc_aft)
 
         row = QFrame()
         row.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1288,7 +1290,7 @@ class SearchPanel(QFrame):
         lbl = QLabel(line)
         lbl.setTextFormat(Qt.TextFormat.RichText)
         lbl.setStyleSheet(f"color: {C['fg_file']}; font-size: 12px;")
-        lbl.setWordWrap(False)
+        lbl.setWordWrap(True)
         lay.addWidget(lbl, 1)
 
         def _click(e, i=idx):
