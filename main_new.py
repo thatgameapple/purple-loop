@@ -194,9 +194,9 @@ class TagScanner:
 
 class AnnotBar(QFrame):
     """选中文字后弹出的浮动工具条"""
-    annotate = pyqtSignal(str)
-    label    = pyqtSignal(str)   # 文字标签名
-    remove   = pyqtSignal()
+    annotate        = pyqtSignal(str)
+    label_requested = pyqtSignal()   # 请求输入标签名
+    remove          = pyqtSignal()
 
     def __init__(self):
         super().__init__(None, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
@@ -266,23 +266,8 @@ class AnnotBar(QFrame):
             }}
             QPushButton:hover {{ background: {C['accent']}; color: white; }}
         """)
-        lbl_btn.clicked.connect(self._toggle_label_input)
+        lbl_btn.clicked.connect(self.label_requested.emit)
         lay.addWidget(lbl_btn)
-
-        self._label_input = QLineEdit()
-        self._label_input.setPlaceholderText('标签名…')
-        self._label_input.setFixedWidth(88)
-        self._label_input.setFixedHeight(26)
-        self._label_input.setStyleSheet(f"""
-            QLineEdit {{
-                background: {C['bg']}; color: {C['fg']};
-                border: 1px solid {C['accent']}; border-radius: 4px;
-                padding: 0 6px; font-size: 13px;
-            }}
-        """)
-        self._label_input.returnPressed.connect(self._emit_label)
-        self._label_input.hide()
-        lay.addWidget(self._label_input)
 
         # ── 删除按钮 ──────────────────────────────
         sep = QFrame()
@@ -301,23 +286,6 @@ class AnnotBar(QFrame):
         """)
         del_btn.clicked.connect(self.remove.emit)
         lay.addWidget(del_btn)
-
-    def _toggle_label_input(self):
-        if self._label_input.isHidden():
-            self._label_input.show()
-            self._label_input.setFocus()
-            self._label_input.clear()
-            self.adjustSize()
-        else:
-            self._label_input.hide()
-            self.adjustSize()
-
-    def _emit_label(self):
-        text = self._label_input.text().strip()
-        self._label_input.hide()
-        self.adjustSize()
-        if text:
-            self.label.emit(text)
 
 
 # ── 标注面板（右侧卡片列表）─────────────────────────────────────────────
@@ -1180,7 +1148,7 @@ class MainWindow(QMainWindow):
         # 浮动标注工具条
         self._annot_bar = AnnotBar()
         self._annot_bar.annotate.connect(self._do_annotate)
-        self._annot_bar.label.connect(self._do_label)
+        self._annot_bar.label_requested.connect(self._request_label)
         self._annot_bar.remove.connect(self._do_remove_annot)
         self._annot_bar.hide()
 
@@ -1378,10 +1346,29 @@ class MainWindow(QMainWindow):
             self._annot_bar.hide()
             self._annot_panel.refresh(self._fp)
 
-    def _do_label(self, label_text: str):
-        annot = self._txt_editor.annotate('label', label_text)
-        if annot:
+    def _request_label(self):
+        """点击 # 按钮后：先关浮动条，再弹输入框（IME 在 Popup 里不工作）"""
+        # 保存当前选区
+        cur = self._txt_editor.textCursor()
+        if not cur.hasSelection():
             self._annot_bar.hide()
+            return
+        saved_anchor   = cur.anchor()
+        saved_position = cur.position()
+        self._annot_bar.hide()
+
+        label_text, ok = QInputDialog.getText(
+            self, '文字标签', '标签名：')
+        if not ok or not label_text.strip():
+            return
+
+        # 恢复选区后应用标签
+        c = self._txt_editor.textCursor()
+        c.setPosition(saved_anchor)
+        c.setPosition(saved_position, QTextCursor.MoveMode.KeepAnchor)
+        self._txt_editor.setTextCursor(c)
+        annot = self._txt_editor.annotate('label', label_text.strip())
+        if annot:
             self._annot_panel.refresh(self._fp)
 
     def _do_remove_annot(self):
