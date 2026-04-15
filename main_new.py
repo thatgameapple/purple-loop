@@ -668,7 +668,13 @@ class TxtEditor(QTextEdit):
 
         # 恢复阅读位置（延迟到布局完成后）
         saved_pos = self.store.get_read_pos(path)
-        QTimer.singleShot(50, lambda: self.verticalScrollBar().setValue(saved_pos))
+        def _restore():
+            self.verticalScrollBar().setValue(saved_pos)
+            # 通知主窗口更新进度条
+            mw = self.window()
+            if hasattr(mw, '_update_progress'):
+                mw._update_progress()
+        QTimer.singleShot(50, _restore)
 
 
     def _apply_annotations(self):
@@ -1341,6 +1347,25 @@ class MainWindow(QMainWindow):
         self._note_bar.saved.connect(lambda: self._annot_panel.refresh(self._fp))
         ew_lay.addWidget(self._note_bar)
 
+        # 阅读进度条（底部细条）
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setFixedHeight(3)
+        self._progress_bar.setRange(0, 1000)
+        self._progress_bar.setValue(0)
+        self._progress_bar.setTextVisible(False)
+        self._progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                background: {C['bg_input']};
+                border: none; border-radius: 0;
+            }}
+            QProgressBar::chunk {{
+                background: {C['accent']};
+                border-radius: 0;
+            }}
+        """)
+        ew_lay.addWidget(self._progress_bar)
+        self._txt_editor.verticalScrollBar().valueChanged.connect(self._update_progress)
+
         self._content_split.addWidget(editor_wrap)
 
         # 标注面板
@@ -1471,6 +1496,14 @@ class MainWindow(QMainWindow):
         self._annot_panel.refresh(path)
         self._stack.setCurrentWidget(self._txt_editor)
         self.statusBar().showMessage(Path(path).name, 0)
+
+    def _update_progress(self, value: int = -1):
+        sb = self._txt_editor.verticalScrollBar()
+        if value < 0:
+            value = sb.value()
+        maximum = sb.maximum()
+        self._progress_bar.setValue(
+            int(value / maximum * 1000) if maximum > 0 else 0)
 
     def _save(self):
         self._txt_editor.save()
