@@ -2231,6 +2231,63 @@ class HelpDialog(QDialog):
         ex.setWordWrap(True)
         lay.addWidget(ex)
 
+        # ── 标注功能
+        title('标注功能 · 像剪辑师一样精读逐字稿')
+        subtitle('选中 5 个字以上，松开鼠标，浮动工具条自动弹出。选择颜色即完成标注，无需额外操作。')
+        sep()
+
+        annot_rows = [
+            ('#e8c870', '黄色高亮', '核心观点 / 关键结论',
+             '适合标记嘉宾的核心论断、精华金句，剪辑时优先保留。'),
+            ('#5ec87a', '绿色高亮', '精彩表达 / 可直接用',
+             '语言流畅、表达完整，可作为成片素材直接使用。'),
+            ('#e86090', '粉色高亮', '需要关注 / 存疑内容',
+             '事实待核实、逻辑跳跃、或需要补拍的段落。'),
+            ('#a878f0', '紫色高亮', '延伸话题 / 备用素材',
+             '有趣但主题外，或可用于下一期节目的内容。'),
+            (C['fg'], '加粗', '强调重点词',
+             '在长段落中标出最重要的词或短语，快速定位。'),
+            (C['fg'], '下划线', '专有名词 / 需查证',
+             '人名、地名、术语等需要核实或添加字幕注释的词。'),
+        ]
+
+        for dot_c, label, usage, tip in annot_rows:
+            row = QWidget()
+            row.setStyleSheet(f'background: {C["bg_input"]}; border-radius: 7px; margin-bottom: 6px;')
+            rv = QVBoxLayout(row)
+            rv.setContentsMargins(14, 9, 14, 9)
+            rv.setSpacing(3)
+            top_h = QHBoxLayout()
+            top_h.setSpacing(8)
+            dot = QLabel('●')
+            dot.setStyleSheet(f'color: {dot_c}; font-size: 15px;')
+            dot.setFixedWidth(18)
+            top_h.addWidget(dot)
+            lbl_w = QLabel(f'<b>{label}</b>　<span style="color:{C["fg_tag"]}; font-size:12px;">{usage}</span>')
+            lbl_w.setStyleSheet(f'color: {C["fg"]}; font-size: 13px;')
+            top_h.addWidget(lbl_w)
+            top_h.addStretch()
+            rv.addLayout(top_h)
+            tip_w = QLabel(tip)
+            tip_w.setStyleSheet(f'color: {C["fg_dim"]}; font-size: 12px; padding-left: 26px;')
+            tip_w.setWordWrap(True)
+            rv.addWidget(tip_w)
+            lay.addWidget(row)
+
+        workflow = QLabel(
+            '💡 推荐工作流：读完全文先用「语气词高亮」找出节奏断点 → '
+            '再开「话语标记词」看逻辑骨架 → '
+            '最后用黄/绿/粉/紫标注段落，打开标注面板（Ctrl+\\）纵览全局，'
+            '确定剪辑取舍。'
+        )
+        workflow.setStyleSheet(
+            f'color: {C["fg_tag"]}; font-size: 12px; '
+            f'background: {C["bg_sel"]}; border-radius: 6px; '
+            f'padding: 10px 14px; margin-top: 8px; margin-bottom: 4px;'
+        )
+        workflow.setWordWrap(True)
+        lay.addWidget(workflow)
+
         # ── 快捷键
         title('常用快捷键')
         sep()
