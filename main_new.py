@@ -593,7 +593,7 @@ class TxtEditor(QTextEdit):
         self.setStyleSheet(f"""
             QTextEdit {{
                 background: {C['bg']}; color: {C['fg']};
-                border: none; padding: 48px 120px;
+                border: none; padding: 56px 160px;
                 selection-background-color: #4a4a55;
                 selection-color: #e0e0e0;
             }}
@@ -651,7 +651,8 @@ class TxtEditor(QTextEdit):
         cur = QTextCursor(self.document())
         cur.select(QTextCursor.SelectionType.Document)
         blk_fmt = QTextBlockFormat()
-        blk_fmt.setLineHeight(165, 1)  # 1 = ProportionalHeight (百分比)
+        blk_fmt.setLineHeight(175, 1)       # 1.75 倍行距（研究推荐深色背景）
+        blk_fmt.setBottomMargin(16)         # 段落间距 ~1em（16px）
         cur.setBlockFormat(blk_fmt)
 
     def load_file(self, path: str):
