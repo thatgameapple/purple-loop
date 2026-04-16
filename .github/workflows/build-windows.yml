@@ -31,6 +31,7 @@ jobs:
           pyinstaller `
             --windowed `
             --name "purple loop" `
+            --icon "AppIcon.ico" `
             --add-data "fonts;fonts" `
             --hidden-import "annotation_manager" `
             --hidden-import "annotation_store" `
