@@ -13,13 +13,9 @@
 
 从 [Releases](https://github.com/thatgameapple/purple-loop/releases) 下载最新版 `.dmg`，拖入应用程序文件夹。
 
-首次打开前，在终端运行一次以下命令：
+首次打开时，**右键点击 app → 选「打开」**，在弹出的提示中再次点「打开」即可。之后双击正常启动。
 
-```bash
-sudo xattr -rd com.apple.quarantine /Applications/purple\ loop.app
-```
-
-> macOS 会对从网络下载的 app 添加隔离标记，运行此命令后即可正常打开。
+> 这是 macOS 对未签名第三方应用的标准安全提示，操作一次即可。
 
 ---
 
