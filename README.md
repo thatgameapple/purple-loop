@@ -11,7 +11,15 @@
 
 ## 安装 · Install
 
-从 [Releases](https://github.com/thatgameapple/purple-loop/releases) 下载最新版 `.dmg`，拖入应用程序文件夹即可。
+从 [Releases](https://github.com/thatgameapple/purple-loop/releases) 下载最新版 `.dmg`，拖入应用程序文件夹。
+
+首次打开前，在终端运行一次以下命令：
+
+```bash
+sudo xattr -rd com.apple.quarantine /Applications/purple\ loop.app
+```
+
+> macOS 会对从网络下载的 app 添加隔离标记，运行此命令后即可正常打开。
 
 ---
 
