@@ -1,84 +1,51 @@
-name: Build Windows Installer
+name: Build Windows
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号 (如 1.6)'
+        required: true
+        default: '1.6'
 
 jobs:
-  build-windows:
+  build:
     runs-on: windows-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install PyMuPDF python-docx Pillow pyinstaller tkinterdnd2
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyQt6 Pillow pyinstaller
 
-    - name: Build exe with PyInstaller
-      run: |
-        python -m PyInstaller `
-          --windowed `
-          --name "逐字稿" `
-          --add-data "fonts;fonts" `
-          --hidden-import "annotation_manager" `
-          --hidden-import "annotation_store" `
-          --hidden-import "theme" `
-          --hidden-import "fitz" `
-          --hidden-import "docx" `
-          --hidden-import "PIL" `
-          --noconfirm `
-          main.py
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller `
+            --windowed `
+            --name "purple loop" `
+            --add-data "fonts;fonts" `
+            --hidden-import "annotation_manager" `
+            --hidden-import "annotation_store" `
+            --hidden-import "theme" `
+            --hidden-import "PIL" `
+            --noconfirm `
+            main_new.py
 
-    - name: Create Inno Setup script
-      run: |
-        $iss = @"
-        [Setup]
-        AppName=逐字稿
-        AppVersion=1.2
-        DefaultDirName={autopf}\逐字稿
-        DefaultGroupName=逐字稿
-        OutputDir=installer
-        OutputBaseFilename=zhuzigao_installer
-        Compression=lzma
-        SolidCompression=yes
-        WizardStyle=modern
+      - name: Package as ZIP
+        run: |
+          Compress-Archive -Path "dist\purple loop" -DestinationPath "purple_loop_${{ github.event.inputs.version }}_windows.zip"
 
-        [Files]
-        Source: "dist\逐字稿\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
-
-        [Icons]
-        Name: "{group}\逐字稿"; Filename: "{app}\逐字稿.exe"
-        Name: "{commondesktop}\逐字稿"; Filename: "{app}\逐字稿.exe"
-
-        [Run]
-        Filename: "{app}\逐字稿.exe"; Description: "立即启动逐字稿"; Flags: postinstall nowait
-        "@
-        $iss | Out-File -FilePath "setup.iss" -Encoding UTF8
-
-    - name: Install Inno Setup
-      run: choco install innosetup -y
-
-    - name: Build installer
-      run: iscc setup.iss
-
-    - name: Push installer to Gitee
-      shell: bash
-      env:
-        GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-      run: |
-        git config --global user.email "action@github.com"
-        git config --global user.name "GitHub Action"
-        git clone "https://thatgameapple:${GITEE_TOKEN}@gitee.com/thatgameapple/zhuzigao.git" gitee_repo
-        cp installer/zhuzigao_installer.exe gitee_repo/
-        cd gitee_repo
-        git add zhuzigao_installer.exe
-        git diff --staged --quiet && echo "nothing to commit" || (git commit -m "update windows installer" && git push)
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.event.inputs.version }}
+          files: purple_loop_${{ github.event.inputs.version }}_windows.zip
+          fail_on_unmatched_files: true
