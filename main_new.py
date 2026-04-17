@@ -1025,7 +1025,7 @@ class TxtEditor(QTextEdit):
         w = self.width()
         max_content = 700
         # 只用左边 padding 控制内容宽度，右边 8px 让滚动条几乎贴着边框
-        left_pad = max(60, w - max_content - 8 - 6)   # 6px=滚动条宽度
+        left_pad = max(60, (w - max_content - 8 - 6) // 2)   # 6px=滚动条宽度，除2居中
         self.setStyleSheet(f"""
             QTextEdit {{
                 background: {C['bg']}; color: {C['fg']};
