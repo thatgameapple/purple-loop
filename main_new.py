@@ -3042,6 +3042,12 @@ class MainWindow(QMainWindow):
         self._annot_bar.hide()
         self._note_bar.hide()
         self._pending_annot_id = None   # 防止跨文件标注误操作
+        # 清除旧文件的搜索状态，防止 QTextCursor 悬空
+        self._search_matches = []
+        self._search_idx = -1
+        self._clear_search_hl()
+        if self._search_bar.isVisible():
+            self._search_bar.set_count(0)
         self._txt_editor.load_file(path)
         self._annot_panel.refresh(path)
         self._stack.setCurrentWidget(self._txt_editor)
@@ -3292,7 +3298,7 @@ class MainWindow(QMainWindow):
             self._jump_to_match(0)
 
     def _jump_to_match(self, idx: int):
-        if not self._search_matches or idx >= len(self._search_matches):
+        if not self._search_matches or not (0 <= idx < len(self._search_matches)):
             return
         doc = self._txt_editor.document()
 
