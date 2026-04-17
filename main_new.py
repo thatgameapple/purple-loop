@@ -3359,15 +3359,21 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
+        # 用正则精确匹配：#old_path 后跟 / 或非标签字符，避免误改同前缀的其他标签
+        # 例如重命名 #阳明心学智慧 时不误改 #阳明心学智慧好
+        _pat = re.compile(
+            r'(?<=#)' + re.escape(old_path) + r'(?=/|\s|$|[，。！？、；：\n\r])'
+        )
+
         changed = 0
         for fp_str in self.store.get_txt_files():
             fp = Path(fp_str)
             try:
                 text = fp.read_text('utf-8')
-                if old_tag in text:
-                    fp.write_text(text.replace(old_tag, new_tag), 'utf-8')
+                new_text = _pat.sub(new_path, text)
+                if new_text != text:
+                    fp.write_text(new_text, 'utf-8')
                     changed += 1
-                    # 若当前编辑器打开的就是这个文件，同步刷新显示
                     if fp_str == self._fp:
                         self._txt_editor.load_file(fp_str)
             except Exception:
@@ -3377,14 +3383,18 @@ class MainWindow(QMainWindow):
             f'已将 #{old_path} 重命名为 #{new_path}，影响 {changed} 个文件', 4000)
 
     def _merge_tag(self, src: str, dst: str):
-        """将 #src 全部替换为 #dst"""
+        """将 #src 全部替换为 #dst（含子标签）"""
+        _pat = re.compile(
+            r'(?<=#)' + re.escape(src) + r'(?=/|\s|$|[，。！？、；：\n\r])'
+        )
         changed = 0
         for fp_str in self.store.get_txt_files():
             fp = Path(fp_str)
             try:
                 text = fp.read_text('utf-8')
-                if f'#{src}' in text:
-                    fp.write_text(text.replace(f'#{src}', f'#{dst}'), 'utf-8')
+                new_text = _pat.sub(dst, text)
+                if new_text != text:
+                    fp.write_text(new_text, 'utf-8')
                     changed += 1
                     if fp_str == self._fp:
                         self._txt_editor.load_file(fp_str)
