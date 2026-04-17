@@ -236,12 +236,20 @@ class FileStore:
 
 
 class TagScanner:
-    """从 .txt 文件内容提取 #标签"""
+    """从 .txt 文件内容提取 #标签，带 mtime 缓存"""
+
+    _cache: dict = {}   # {filepath: (mtime, tags_set)}
 
     @staticmethod
     def scan(filepath: str) -> set:
         try:
-            return set(TAG_RE.findall(Path(filepath).read_text('utf-8')))
+            mtime = Path(filepath).stat().st_mtime
+            cached = TagScanner._cache.get(filepath)
+            if cached and cached[0] == mtime:
+                return cached[1]
+            tags = set(TAG_RE.findall(Path(filepath).read_text('utf-8')))
+            TagScanner._cache[filepath] = (mtime, tags)
+            return tags
         except Exception:
             return set()
 
@@ -1010,11 +1018,6 @@ class TxtEditor(QTextEdit):
         color = f"#{v:02x}{v:02x}{v:02x}"
         self._count_lbl.setStyleSheet(
             f"color: {color}; background: transparent;")
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._position_count_lbl()
-        self._apply_reading_width()
 
     def _apply_reading_width(self):
         """FixedPixelWidth 硬限行宽，左侧 padding 居中，右侧 8px 使滚动条贴边"""
@@ -2958,9 +2961,12 @@ class MainWindow(QMainWindow):
             for w in targets:
                 w.show()
             self._fade_widgets(targets, fade_in=True)
+            # 只恢复进入禅定前的状态，不多做
             if self._pre_zen_annot:
                 self._annot_panel.show()
-                self._annot_panel_action.setChecked(True)
+            else:
+                self._annot_panel.hide()
+            self._annot_panel_action.setChecked(self._pre_zen_annot)
 
     def _fade_widgets(self, widgets, fade_in: bool, on_done=None):
         """对多个 widget 同时做淡入/淡出动画（150ms）"""
@@ -3030,6 +3036,7 @@ class MainWindow(QMainWindow):
         self._fp = path
         self._annot_bar.hide()
         self._note_bar.hide()
+        self._pending_annot_id = None   # 防止跨文件标注误操作
         self._txt_editor.load_file(path)
         self._annot_panel.refresh(path)
         self._stack.setCurrentWidget(self._txt_editor)
@@ -3160,7 +3167,7 @@ class MainWindow(QMainWindow):
             self._delete_annot_by_id(self._pending_annot_id)
         else:
             self._txt_editor.remove_at_cursor()
-            self._annot_panel.refresh(self._fp)
+        self._annot_panel.refresh(self._fp)   # 统一在最后刷新
         self._annot_bar.hide()
         self._pending_annot_id = None
 
@@ -3169,7 +3176,6 @@ class MainWindow(QMainWindow):
             return
         self.store.remove_annotation(self._fp, annot_id)
         self._txt_editor._apply_annotations()
-        self._annot_panel.refresh(self._fp)
 
     def _clear_all_annots(self):
         if not self._fp:
@@ -3343,6 +3349,7 @@ class MainWindow(QMainWindow):
 
     def dropEvent(self, event):
         from converter import convert_to_txt, SUPPORTED_EXTS
+        any_success = False
         for url in event.mimeData().urls():
             fp  = url.toLocalFile()
             ext = Path(fp).suffix.lower()
@@ -3356,17 +3363,21 @@ class MainWindow(QMainWindow):
                     self._open_file(fp)
                     self.statusBar().showMessage(
                         f'已转换并打开：{Path(fp).name}', 3000)
+                    any_success = True
             except Exception as e:
                 self.statusBar().showMessage(f'转换失败：{e}', 5000)
-        self._refresh_sidebar()
+        if any_success:
+            self._refresh_sidebar()   # 只有成功时才刷新侧栏
         event.acceptProposedAction()
 
     def closeEvent(self, event):
         self._txt_editor.save()
-        # 保存当前阅读位置
+        # 按字符偏移保存阅读位置
         if self._fp:
-            self.store.set_read_pos(
-                self._fp, self._txt_editor.verticalScrollBar().value())
+            ed = self._txt_editor
+            top_left = ed.viewport().rect().topLeft()
+            char_pos = ed.cursorForPosition(top_left).position()
+            self.store.set_read_pos(self._fp, char_pos)
         super().closeEvent(event)
 
 
