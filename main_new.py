@@ -894,41 +894,50 @@ class TxtEditor(QTextEdit):
     def load_file(self, path: str):
         # 保存当前文件的阅读位置（按字符偏移，不受字号/行距影响）
         if self._fp:
-            # QPoint(2,2) 避开边框像素，更准确地取视口顶部可见字符
             char_pos = self.cursorForPosition(QPoint(2, 2)).position()
             self.store.set_read_pos(self._fp, char_pos)
 
         self._fp      = path
         self._loading = True
-        # 先更新高亮器状态（不触发 rehighlight），让 setPlainText 后的自动高亮直接用正确数据
         self._highlighter.set_file(path, rehighlight=False)
         text = Path(path).read_text('utf-8')
+
+        # ── 关键：屏蔽视口绘制，直到位置恢复完成 ──────────────────
+        # setPlainText 会把 scrollbar 重置为 0，用户会看到文档顶部一闪。
+        # 解决方案：在整个加载+恢复流程中禁用 viewport 绘制，
+        # 位置还原后开启，用户看到的第一帧就是正确位置。
+        self.viewport().setUpdatesEnabled(False)
+
         self.document().setUndoRedoEnabled(False)
         self.setPlainText(text)
-        self._apply_line_spacing()   # setPlainText 会重置 block format
+        self._apply_line_spacing()
         self.document().setUndoRedoEnabled(True)
         self._loading = False
-        self._update_count()         # 加载完成后更新一次字数
-        QTimer.singleShot(0, self._apply_reading_width)   # 等布局稳定后重算行宽
+        self._update_count()
+        self._apply_reading_width()   # 同步调用，让布局立即生效
 
-        # 恢复阅读位置（延迟到行宽重算稳定后，按字符偏移定位）
         saved_char = self.store.get_read_pos(path)
-        def _restore():
+
+        def _restore_and_show():
             cur = QTextCursor(self.document())
             max_pos = max(0, self.document().characterCount() - 1)
             cur.setPosition(min(saved_char, max_pos))
             self.setTextCursor(cur)
             self.ensureCursorVisible()
-            # ensureCursorVisible 只保证光标在视口内，不保证在顶部。
-            # 额外调整 scrollbar，让保存的字符出现在视口顶端。
+            # 让保存的字符贴着视口顶端
             cr = self.cursorRect(cur)
             if cr.top() > 0:
                 sb = self.verticalScrollBar()
                 sb.setValue(sb.value() + cr.top())
+            # 解锁绘制：第一帧直接画在正确位置，用户零感知
+            self.viewport().setUpdatesEnabled(True)
+            self.viewport().update()
             mw = self.window()
             if hasattr(mw, '_update_progress'):
                 mw._update_progress()
-        QTimer.singleShot(120, _restore)   # 120ms：等 _apply_reading_width 布局稳定
+
+        # singleShot(0)：等本轮事件循环中 setStyleSheet/布局事件全部处理完后执行
+        QTimer.singleShot(0, _restore_and_show)
 
 
     def _apply_annotations(self):
