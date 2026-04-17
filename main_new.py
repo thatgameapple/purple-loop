@@ -173,12 +173,12 @@ class FileStore:
         self.data.setdefault('config', {})[key] = value
         self.save()
 
-    # ── 阅读位置 ──────────────────────────────────────────────
+    # ── 阅读位置（按字符偏移记忆，不受字号/行距影响）──────────
     def get_read_pos(self, filepath: str) -> int:
         return self.data.get('read_positions', {}).get(filepath, 0)
 
-    def set_read_pos(self, filepath: str, pos: int):
-        self.data.setdefault('read_positions', {})[filepath] = pos
+    def set_read_pos(self, filepath: str, char_pos: int):
+        self.data.setdefault('read_positions', {})[filepath] = char_pos
         self.save()
 
     # ── 标注 ──────────────────────────────────────────────────
@@ -883,9 +883,11 @@ class TxtEditor(QTextEdit):
         doc.setUndoRedoEnabled(True)
 
     def load_file(self, path: str):
-        # 保存当前文件的阅读位置
+        # 保存当前文件的阅读位置（按字符偏移，不受字号/行距影响）
         if self._fp:
-            self.store.set_read_pos(self._fp, self.verticalScrollBar().value())
+            top_left = self.viewport().rect().topLeft()
+            char_pos = self.cursorForPosition(top_left).position()
+            self.store.set_read_pos(self._fp, char_pos)
 
         self._fp      = path
         self._loading = True
@@ -900,11 +902,13 @@ class TxtEditor(QTextEdit):
         self._update_count()         # 加载完成后更新一次字数
         QTimer.singleShot(0, self._apply_reading_width)   # 等布局稳定后重算行宽
 
-        # 恢复阅读位置（延迟到布局完成后）
-        saved_pos = self.store.get_read_pos(path)
+        # 恢复阅读位置（延迟到布局完成后，按字符偏移定位）
+        saved_char = self.store.get_read_pos(path)
         def _restore():
-            self.verticalScrollBar().setValue(saved_pos)
-            # 通知主窗口更新进度条
+            cur = QTextCursor(self.document())
+            cur.setPosition(min(saved_char, self.document().characterCount() - 1))
+            self.setTextCursor(cur)
+            self.ensureCursorVisible()
             mw = self.window()
             if hasattr(mw, '_update_progress'):
                 mw._update_progress()
@@ -3115,9 +3119,9 @@ class MainWindow(QMainWindow):
         self._pending_annot_id = a['id'] if a else None
 
     def _do_annotate(self, atype: str):
+        self._annot_bar.hide()   # 无论结果如何立即隐藏
         annot = self._txt_editor.annotate(atype)
         if annot:
-            self._annot_bar.hide()
             self._annot_panel.refresh(self._fp)
 
     def _request_label(self):
