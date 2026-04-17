@@ -778,36 +778,6 @@ class DocHighlighter(QSyntaxHighlighter):
                     self.setFormat(m.start(), m.end() - m.start(), fmt)
 
 
-# ── 焦点模式遮罩层 ────────────────────────────────────────────────────────
-
-class FocusOverlay(QWidget):
-    """透明覆盖层，在焦点模式下遮暗当前段落以外的区域"""
-    def __init__(self, editor: 'TxtEditor'):
-        super().__init__(editor.viewport())
-        self._editor = editor
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
-        self.hide()
-
-    def paintEvent(self, event):
-        cur_block = self._editor.textCursor().block()
-        if not cur_block.isValid():
-            return
-        block_rect = self._editor.blockBoundingGeometry(cur_block).translated(
-            self._editor.contentOffset()).toRect()
-
-        dim = QColor(C['bg'])
-        dim.setAlpha(170)
-        painter = QPainter(self)
-        vp = self.rect()
-        if block_rect.top() > 0:
-            painter.fillRect(0, 0, vp.width(), block_rect.top(), dim)
-        if block_rect.bottom() < vp.bottom():
-            painter.fillRect(0, block_rect.bottom(), vp.width(),
-                             vp.bottom() - block_rect.bottom(), dim)
-        painter.end()
-
-
 # ── txt 编辑器 ───────────────────────────────────────────────────────────
 
 class TxtEditor(QTextEdit):
@@ -884,9 +854,8 @@ class TxtEditor(QTextEdit):
         self._wc_timer.timeout.connect(self._breathe_count)
         self._wc_timer.start()
 
-        # 焦点模式遮罩
-        self._overlay = FocusOverlay(self)
-        self.cursorPositionChanged.connect(self._overlay.update)
+        # 焦点模式：光标移动时更新遮暗效果
+        self.cursorPositionChanged.connect(self._update_focus_dim)
 
     def _set_font(self):
         if not hasattr(self, '_font_size'):
@@ -1063,21 +1032,53 @@ class TxtEditor(QTextEdit):
             QScrollBar::sub-page:vertical {{ background: transparent; }}
         """)
 
+    def _update_focus_dim(self):
+        """焦点模式：用 setExtraSelections 遮暗当前段落以外的文字"""
+        if not self._focus_mode:
+            self.setExtraSelections([])
+            return
+        doc = self.document()
+        cur_block = self.textCursor().block()
+        if not cur_block.isValid():
+            self.setExtraSelections([])
+            return
+
+        dim_fmt = QTextCharFormat()
+        dim_fmt.setForeground(QColor('#404050'))   # 暗色前景
+
+        selections = []
+        start_pos = cur_block.position()
+        end_pos   = start_pos + cur_block.length() - 1
+        doc_end   = doc.characterCount() - 1
+
+        if start_pos > 0:
+            sel = QTextEdit.ExtraSelection()
+            c = QTextCursor(doc)
+            c.setPosition(0)
+            c.setPosition(start_pos, QTextCursor.MoveMode.KeepAnchor)
+            sel.cursor = c
+            sel.format  = dim_fmt
+            selections.append(sel)
+
+        if end_pos < doc_end:
+            sel = QTextEdit.ExtraSelection()
+            c = QTextCursor(doc)
+            c.setPosition(end_pos + 1)
+            c.setPosition(doc_end, QTextCursor.MoveMode.KeepAnchor)
+            sel.cursor = c
+            sel.format  = dim_fmt
+            selections.append(sel)
+
+        self.setExtraSelections(selections)
+
     def set_focus_mode(self, enabled: bool):
         self._focus_mode = enabled
-        if enabled:
-            self._overlay.setGeometry(self.viewport().rect())
-            self._overlay.show()
-            self._overlay.update()
-        else:
-            self._overlay.hide()
+        self._update_focus_dim()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._position_count_lbl()
         self._apply_reading_width()
-        if hasattr(self, '_overlay'):
-            self._overlay.setGeometry(self.viewport().rect())
 
     def contextMenuEvent(self, event):
         menu = QMenu(self)
