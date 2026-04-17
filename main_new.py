@@ -1242,33 +1242,95 @@ class _RedMenuAction(QWidgetAction):
         self.setDefaultWidget(w)
 
 
-# ── 侧边栏委托：悬停显示 ··· 按钮 ────────────────────────────────────────
+# ── 侧边栏委托：hover / active 视觉 + tag 行 ··· 按钮 ───────────────────
 
 class _SidebarTagDelegate(QStyledItemDelegate):
-    """在 tag 行右侧悬停时渲染 ··· 按钮；点击触发菜单。"""
-    _BTN_W   = 26
-    _FG_IDLE = QColor(130, 118, 170, 180)   # 低饱和紫，hover 时显示
-    _BTN_HV  = QColor(124, 111, 168, 60)    # ··· 按钮本身的背景
+    """
+    统一处理所有侧边栏行的绘制：
+    - tag 行：hover 时右侧显示 ··· 按钮
+    - file 行：hover 时文字变亮 + 左侧 2px 线；active 时 accent 色 + 左侧 3px 线
+    - 所有行：hover/selected 背景透明（由 QSS 关闭默认背景，委托自己画）
+    """
+    _BTN_W    = 26
+    _FG_IDLE  = QColor(130, 118, 170, 180)
+    _BTN_HV   = QColor(124, 111, 168, 60)
+    _HV_BG    = QColor(255, 255, 255, 8)    # 极浅白色背景，hover 时显示
+    _HV_LINE  = QColor(100, 95, 130, 180)   # hover 左侧细线
+    _ACT_LINE = QColor(C['accent'])          # active 左侧亮线
+    _ACT_FG   = QColor(C['fg'])             # active 文字颜色
 
     def paint(self, painter, option, index):
-        super().paint(painter, option, index)
-        data = index.data(Qt.ItemDataRole.UserRole)
-        if not data or data[0] not in ('tag', 'tag_pin'):
-            return
         from PyQt6.QtWidgets import QStyle
+        from PyQt6.QtCore import QRectF
+        data     = index.data(Qt.ItemDataRole.UserRole)
         is_hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
-        if not is_hover:
-            return
-        btn = self._btn_rect(option.rect)
+        is_sel   = bool(option.state & QStyle.StateFlag.State_Selected)
+        r        = option.rect
+
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # ── file 行：自定义绘制 ─────────────────────────────────
+        if data and data[0] == 'file':
+            fp      = data[1]
+            tree    = self.parent()
+            is_act  = hasattr(tree, '_active_fp') and tree._active_fp == fp
+
+            # 背景（hover 时极淡白）
+            if is_hover and not is_act:
+                painter.fillRect(r, self._HV_BG)
+
+            # active 背景（比 hover 略深）
+            if is_act:
+                painter.fillRect(r, QColor(255, 255, 255, 14))
+
+            # 左侧竖线
+            line_w = 3 if is_act else (2 if is_hover else 0)
+            if line_w:
+                line_color = self._ACT_LINE if is_act else self._HV_LINE
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(line_color)
+                painter.drawRoundedRect(
+                    QRectF(r.left(), r.top() + 2, line_w, r.height() - 4), 1, 1)
+
+            # 文字颜色
+            text = index.data(Qt.ItemDataRole.DisplayRole) or ''
+            if is_act:
+                fg = self._ACT_FG
+            elif is_hover:
+                fg = QColor(C['fg_file']).lighter(160)
+            else:
+                fg = QColor(C['fg_file'])
+
+            painter.setPen(fg)
+            f = QFont('PingFang SC', 12)
+            if is_act:
+                f.setWeight(QFont.Weight.Medium)
+            painter.setFont(f)
+            text_rect = r.adjusted(line_w + 6, 0, 0, 0)
+            painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter, text)
+            painter.restore()
+            return
+
+        # ── tag / header 行：交给 super() 正常绘制，再叠加 ··· ─
+        super().paint(painter, option, index)
+
+        if not data or data[0] not in ('tag', 'tag_pin'):
+            painter.restore()
+            return
+
+        if not is_hover:
+            painter.restore()
+            return
+
+        btn = self._btn_rect(r)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(self._BTN_HV)
         painter.drawRoundedRect(btn, 4, 4)
         painter.setPen(self._FG_IDLE)
-        f = QFont('PingFang SC', 13)
-        f.setBold(True)
-        painter.setFont(f)
+        f2 = QFont('PingFang SC', 13)
+        f2.setBold(True)
+        painter.setFont(f2)
         painter.drawText(btn, Qt.AlignmentFlag.AlignCenter, '···')
         painter.restore()
 
@@ -1305,9 +1367,10 @@ class Sidebar(QTreeWidget):
 
     def __init__(self, store: FileStore, parent=None):
         super().__init__(parent)
-        self.store   = store
+        self.store        = store
         self._txt_files: list[str] = []
-        self._persist_key = 'sidebar_expanded'  # store config key
+        self._persist_key = 'sidebar_expanded'
+        self._active_fp: str = ''   # 当前打开的文件路径
 
         self.setHeaderHidden(True)
         self.setIndentation(16)
@@ -1324,11 +1387,11 @@ class Sidebar(QTreeWidget):
                 border-radius: 4px;
             }}
             QTreeWidget::item:selected {{
-                background: {C['bg_sel']};
+                background: transparent;
                 color: {C['fg']};
             }}
             QTreeWidget::item:hover {{
-                background: {C['bg_input']};
+                background: transparent;
             }}
             QTreeWidget::branch {{
                 background: {C['bg_sidebar']};
@@ -1449,6 +1512,11 @@ class Sidebar(QTreeWidget):
                 fi.setForeground(0, QColor(C['fg_file']))
 
         self._restore_expanded(expanded)  # None = 全展开（首次启动）
+
+    def set_active(self, fp: str):
+        """标记当前打开的文件，委托会用 accent 色高亮它"""
+        self._active_fp = fp
+        self.viewport().update()
 
     def _on_double_click(self, item: QTreeWidgetItem, col: int):
         data = item.data(0, Qt.ItemDataRole.UserRole)
@@ -3510,6 +3578,7 @@ class MainWindow(QMainWindow):
         self._txt_editor.load_file(path)
         self._annot_panel.refresh(path)
         self._stack.setCurrentWidget(self._txt_editor)
+        self._sidebar.set_active(path)
         self.statusBar().showMessage(Path(path).name, 0)
 
     def _update_progress(self, value: int = -1):
@@ -3852,6 +3921,30 @@ class MainWindow(QMainWindow):
                 self._close_search()
             elif self._note_bar.isVisible():
                 self._note_bar.hide()
+
+        # ── 键盘快捷标注：选中文字后按键直接标注，无需鼠标点工具条 ──
+        # 仅在编辑器有选区且输入焦点不在搜索/备注栏时生效
+        elif (self._fp and self._fp.endswith('.txt')
+              and not self._search_bar._input.hasFocus()
+              and not self._note_bar.isVisible()):
+            cur = self._txt_editor.textCursor()
+            if cur.hasSelection() and len(cur.selectedText().strip()) >= 5:
+                _KEY_ANNOT = {
+                    Qt.Key.Key_1: 'hl_yellow',
+                    Qt.Key.Key_2: 'hl_green',
+                    Qt.Key.Key_3: 'hl_pink',
+                    Qt.Key.Key_4: 'hl_purple',
+                    Qt.Key.Key_B: 'bold',
+                    Qt.Key.Key_U: 'underline',
+                }
+                atype = _KEY_ANNOT.get(event.key())
+                if atype:
+                    self._annot_bar.hide()
+                    annot = self._txt_editor.annotate(atype)
+                    if annot:
+                        self._annot_panel.refresh(self._fp)
+                    return   # 不传递给 super，避免触发其他行为
+
         super().keyPressEvent(event)
 
     # ── 拖放文件 ──────────────────────────────────────────────
