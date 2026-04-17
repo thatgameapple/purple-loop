@@ -1531,7 +1531,6 @@ class Sidebar(QTreeWidget):
 
         menu = QMenu(self)
         menu.setStyleSheet(self._MENU_SS)
-        menu.setIconSize(QSize(15, 15))
 
         # 置顶 / 取消置顶
         pin_text = '取消置顶' if tag_path in pinned else '置顶'
@@ -1552,7 +1551,6 @@ class Sidebar(QTreeWidget):
             if len(all_tags) > 1:
                 merge_menu = menu.addMenu('合并到')
                 merge_menu.setStyleSheet(self._MENU_SS)
-                merge_menu.setIconSize(QSize(15, 15))
                 for t in all_tags:
                     if t != tag_path:
                         a = merge_menu.addAction(t)
