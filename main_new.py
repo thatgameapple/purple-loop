@@ -3707,27 +3707,16 @@ class MainWindow(QMainWindow):
         tmp  = QTextCursor(ed.document())
         tmp.setPosition(end)
 
-        # 用 QTextLayout.lineForTextPosition 精确获取选区末尾所在视觉行的渲染底部
-        # cursorRect 不含行间距；blockBoundingRect + line.rect() 才是完整渲染高度
-        line_bottom_widget = ed.cursorRect(tmp).bottom()   # fallback
-        block = tmp.block()
-        if block.isValid():
-            blk_layout = block.layout()
-            if blk_layout and blk_layout.lineCount() > 0:
-                line = blk_layout.lineForTextPosition(tmp.positionInBlock())
-                if line.isValid():
-                    doc_layout = ed.document().documentLayout()
-                    block_top  = doc_layout.blockBoundingRect(block).top()
-                    cont_off   = ed.contentOffset().y()
-                    line_bottom_widget = int(block_top + line.rect().bottom() + cont_off)
-
-        base_y = ed.mapToGlobal(QPoint(0, line_bottom_widget)).y() + 8
+        # cursorRect.bottom() 是该行字符框底部；行间距在其下方
+        # 用字体行高估算行间距，确保工具条落在选区高亮和下一行文字之间
+        end_rect  = ed.cursorRect(tmp)
+        line_h    = end_rect.height()                  # Qt 返回的行高（含行间距）
+        base_y    = ed.mapToGlobal(end_rect.bottomLeft()).y() + max(4, line_h // 4)
 
         # x：以选区末尾为中心，左移半个工具条宽
-        end_gp = ed.mapToGlobal(ed.cursorRect(tmp).bottomLeft())
-        sh     = self._annot_bar.sizeHint()
-        x      = end_gp.x() - sh.width() // 2
-        y      = base_y                                # 距行渲染底部 8px
+        sh = self._annot_bar.sizeHint()
+        x  = ed.mapToGlobal(end_rect.bottomLeft()).x() - sh.width() // 2
+        y  = base_y
 
         scr = QApplication.primaryScreen().geometry()
         x   = max(4, min(x, scr.width() - sh.width() - 4))
