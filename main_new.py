@@ -3698,25 +3698,39 @@ class MainWindow(QMainWindow):
             # 短选区：只是阅读定位，不弹工具条
             self._annot_bar.hide()
             return
-        # 定位到选区末尾正下方（贴近被选文字，更直观）
-        end = max(cur.position(), cur.anchor())
-        tmp = QTextCursor(self._txt_editor.document())
+        # ── 工具条定位：贴选区下方，不遮文字 ─────────────────────────
+        # 业界做法（Kindle/Google Docs/Apple Notes）：
+        # 把光标移到选区末尾的「下一行」，取其 top y ——
+        # 这天然包含行间距，精准落在选区和下一行之间的空白里。
+        ed   = self._txt_editor
+        end  = max(cur.position(), cur.anchor())
+        tmp  = QTextCursor(ed.document())
         tmp.setPosition(end)
-        rect = self._txt_editor.cursorRect(tmp)
-        gp   = self._txt_editor.mapToGlobal(rect.bottomLeft())
-        sh   = self._annot_bar.sizeHint()
-        x    = gp.x() - sh.width() // 2
-        y    = gp.y() + 8
-        scr  = QApplication.primaryScreen().geometry()
-        x    = max(4, min(x, scr.width()  - sh.width()  - 4))
-        # 如果下方空间不足，改到选区上方
+
+        # 取选区末尾所在行的「下一行顶部」作为 y 基准
+        nxt = QTextCursor(tmp)
+        nxt.movePosition(QTextCursor.MoveOperation.Down)
+        if nxt.position() != tmp.position():          # 还有下一行
+            base_y = ed.mapToGlobal(ed.cursorRect(nxt).topLeft()).y()
+        else:                                          # 已在末行，用底部
+            base_y = ed.mapToGlobal(ed.cursorRect(tmp).bottomLeft()).y() + 6
+
+        # x：以选区末尾为中心，左移半个工具条宽
+        end_gp = ed.mapToGlobal(ed.cursorRect(tmp).bottomLeft())
+        sh     = self._annot_bar.sizeHint()
+        x      = end_gp.x() - sh.width() // 2
+        y      = base_y + 4                           # 距下一行顶部 4px
+
+        scr = QApplication.primaryScreen().geometry()
+        x   = max(4, min(x, scr.width() - sh.width() - 4))
+
+        # 下方空间不足 → 翻到选区上方
         if y + sh.height() + 4 > scr.height():
-            start = min(cur.position(), cur.anchor())
-            tmp2  = QTextCursor(self._txt_editor.document())
+            start  = min(cur.position(), cur.anchor())
+            tmp2   = QTextCursor(ed.document())
             tmp2.setPosition(start)
-            rect2 = self._txt_editor.cursorRect(tmp2)
-            gp2   = self._txt_editor.mapToGlobal(rect2.topLeft())
-            y     = gp2.y() - sh.height() - 8
+            top_gp = ed.mapToGlobal(ed.cursorRect(tmp2).topLeft())
+            y      = top_gp.y() - sh.height() - 8
         y = max(4, y)
         self._annot_bar.move(x, y)
         self._annot_bar.show()
