@@ -1,9 +1,11 @@
 """
 格式转换模块：PDF / DOCX / SRT → TXT
 拖入文件时自动调用，转换结果保存为同目录下的 .txt 文件
+转换后自动经过 text_normalizer 美化管道。
 """
 import re
 from pathlib import Path
+from text_normalizer import normalize as _normalize
 
 
 # ── PDF → TXT ─────────────────────────────────────────────────────────────────
@@ -143,6 +145,15 @@ def convert_to_txt(src_path: str) -> str:
         text = srt_to_txt(src_path)
     else:
         raise ValueError(f"不支持的格式：{ext}，仅支持 .pdf / .docx / .srt")
+
+    # 美化管道：段落重构 + 标点归一化（SRT 已合并好，不需要段落重构）
+    text = _normalize(
+        text,
+        reconstruct_paragraphs=(ext != '.srt'),
+        normalize_punct=True,
+        pangu_spacing=False,
+        clean_fillers=False,
+    )
 
     dst = src.with_suffix('.txt')
     dst.write_text(text, encoding='utf-8')

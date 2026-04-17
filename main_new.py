@@ -3371,6 +3371,8 @@ class MainWindow(QMainWindow):
         fm.addSeparator()
         _act(fm, '保存', self._save, 'Ctrl+S')
         fm.addSeparator()
+        _act(fm, '美化当前文档…', self._beautify_current)
+        fm.addSeparator()
         _act(fm, '退出', self.close)
 
         # 标注
@@ -3814,6 +3816,40 @@ class MainWindow(QMainWindow):
         self.store.clear_all_annotations(self._fp)
         self._txt_editor._apply_annotations()
         self._annot_panel.refresh(self._fp)
+
+    def _beautify_current(self):
+        """对当前打开的 txt 文件执行美化管道（段落重构 + 标点归一化）"""
+        if not self._fp or not self._fp.endswith('.txt'):
+            QMessageBox.information(self, '美化文档', '请先打开一个 .txt 文件。')
+            return
+        reply = QMessageBox.question(
+            self, '美化当前文档',
+            '将对当前文档执行：\n'
+            '• 段落重构（合并意外断行）\n'
+            '• 标点归一化（省略号、破折号、全半角）\n'
+            '• 汉字间多余空格清理\n\n'
+            '操作会直接修改文件内容，标注位置可能偏移。\n继续？',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            from text_normalizer import normalize as _normalize
+            from pathlib import Path
+            raw = Path(self._fp).read_text(encoding='utf-8')
+            beautified = _normalize(
+                raw,
+                reconstruct_paragraphs=True,
+                normalize_punct=True,
+                pangu_spacing=False,
+                clean_fillers=False,
+            )
+            Path(self._fp).write_text(beautified, encoding='utf-8')
+            # 重新加载文件
+            self._txt_editor.load_file(self._fp)
+            self.statusBar().showMessage('美化完成', 3000)
+        except Exception as e:
+            QMessageBox.warning(self, '美化失败', str(e))
 
     def _confirm_clear_all(self):
         if not self._fp:
