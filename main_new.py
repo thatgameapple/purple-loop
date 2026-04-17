@@ -806,7 +806,7 @@ class TxtEditor(QTextEdit):
         self.setStyleSheet(f"""
             QTextEdit {{
                 background: {C['bg']}; color: {C['fg']};
-                border: none; padding: 56px 160px;
+                border: none; padding: 56px 8px 56px 160px;
                 selection-background-color: #4a4a55;
                 selection-color: #e0e0e0;
             }}
@@ -1021,14 +1021,15 @@ class TxtEditor(QTextEdit):
         self._apply_reading_width()
 
     def _apply_reading_width(self):
-        """动态计算左右 padding，使内容区不超过 700px（约 35 个汉字）"""
-        w = self.width()               # 用外层 widget 宽度，滚动条出现不影响此值
+        """动态计算左侧 padding 控制行宽，右侧固定 8px 使滚动条贴近右边框"""
+        w = self.width()
         max_content = 700
-        h_pad = max(60, (w - max_content) // 2)
+        # 只用左边 padding 控制内容宽度，右边 8px 让滚动条几乎贴着边框
+        left_pad = max(60, w - max_content - 8 - 6)   # 6px=滚动条宽度
         self.setStyleSheet(f"""
             QTextEdit {{
                 background: {C['bg']}; color: {C['fg']};
-                border: none; padding: 56px {h_pad}px;
+                border: none; padding: 56px 8px 56px {left_pad}px;
                 selection-background-color: #4a4a55;
                 selection-color: #e0e0e0;
             }}
