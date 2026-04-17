@@ -905,6 +905,11 @@ class TxtEditor(QTextEdit):
         self._fp      = path
         self._loading = True
         self._highlighter.set_file(path, rehighlight=False)
+        if not Path(path).exists():
+            self.setPlainText('')
+            self._loading = False
+            self.setUpdatesEnabled(True)
+            return
         text = Path(path).read_text('utf-8')
 
         # ── 屏蔽绘制，避免用户看到文档头部闪烁 ──────────────────────
@@ -3555,6 +3560,10 @@ class MainWindow(QMainWindow):
 
     # ── 文件操作 ──────────────────────────────────────────────
     def _open_file(self, path: str):
+        if not Path(path).exists():
+            self._sidebar.refresh()   # 刷新侧栏，让已删除的文件消失
+            self.statusBar().showMessage(f'文件已被删除：{Path(path).name}', 4000)
+            return
         self._fp = path
         self._annot_bar.hide()
         self._note_bar.hide()
