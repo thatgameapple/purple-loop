@@ -788,7 +788,6 @@ class TxtEditor(QTextEdit):
         self.store       = store
         self._fp: str | None = None
         self._loading    = False
-        self._focus_mode = False
         self._highlighter = DocHighlighter(self.document(), store)
 
         # 字体
@@ -853,9 +852,6 @@ class TxtEditor(QTextEdit):
         self._wc_timer.setInterval(50)
         self._wc_timer.timeout.connect(self._breathe_count)
         self._wc_timer.start()
-
-        # 焦点模式：光标移动时更新遮暗效果
-        self.cursorPositionChanged.connect(self._update_focus_dim)
 
     def _set_font(self):
         if not hasattr(self, '_font_size'):
@@ -1031,49 +1027,6 @@ class TxtEditor(QTextEdit):
             QScrollBar::add-page:vertical,
             QScrollBar::sub-page:vertical {{ background: transparent; }}
         """)
-
-    def _update_focus_dim(self):
-        """焦点模式：用 setExtraSelections 遮暗当前段落以外的文字"""
-        if not self._focus_mode:
-            self.setExtraSelections([])
-            return
-        doc = self.document()
-        cur_block = self.textCursor().block()
-        if not cur_block.isValid():
-            self.setExtraSelections([])
-            return
-
-        dim_fmt = QTextCharFormat()
-        dim_fmt.setForeground(QColor('#404050'))   # 暗色前景
-
-        selections = []
-        start_pos = cur_block.position()
-        end_pos   = start_pos + cur_block.length() - 1
-        doc_end   = doc.characterCount() - 1
-
-        if start_pos > 0:
-            sel = QTextEdit.ExtraSelection()
-            c = QTextCursor(doc)
-            c.setPosition(0)
-            c.setPosition(start_pos, QTextCursor.MoveMode.KeepAnchor)
-            sel.cursor = c
-            sel.format  = dim_fmt
-            selections.append(sel)
-
-        if end_pos < doc_end:
-            sel = QTextEdit.ExtraSelection()
-            c = QTextCursor(doc)
-            c.setPosition(end_pos + 1)
-            c.setPosition(doc_end, QTextCursor.MoveMode.KeepAnchor)
-            sel.cursor = c
-            sel.format  = dim_fmt
-            selections.append(sel)
-
-        self.setExtraSelections(selections)
-
-    def set_focus_mode(self, enabled: bool):
-        self._focus_mode = enabled
-        self._update_focus_dim()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -2898,13 +2851,6 @@ class MainWindow(QMainWindow):
         vm.addAction(self._annot_panel_action)
         vm.addSeparator()
         _act(vm, '禅定模式', self._toggle_zen, 'Ctrl+Shift+Z')
-        self._focus_action = QAction('焦点模式', self)
-        self._focus_action.setCheckable(True)
-        self._focus_action.setChecked(False)
-        self._focus_action.setShortcut(QKeySequence('Ctrl+Shift+F'))
-        self._focus_action.triggered.connect(
-            lambda checked: self._txt_editor.set_focus_mode(checked))
-        vm.addAction(self._focus_action)
         vm.addSeparator()
         _act(vm, '跳到文章开头', self._go_top,    'Ctrl+Up')
         _act(vm, '跳到文章末尾', self._go_bottom, 'Ctrl+Down')
