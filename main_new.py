@@ -366,6 +366,7 @@ _FILTER_DEFS = [
     ('hl_green',  '#5ec87a', '绿色'),
     ('hl_pink',   '#e86090', '粉色'),
     ('hl_purple', '#a878f0', '紫色'),
+    ('note',      '#c4b0f8', '# 备注'),
 ]
 
 
@@ -497,21 +498,31 @@ class AnnotPanel(QWidget):
         if not filepath:
             return
 
+        # 预读文件内容，用于计算行号
+        try:
+            file_text = Path(filepath).read_text('utf-8')
+        except Exception:
+            file_text = ''
+
         all_annots = self.store.get_annotations(filepath)
         if self._filter is not None:
-            # 'label' 旧类型视为 hl_purple
-            shown = [a for a in all_annots
-                     if a['type'] == self._filter
-                     or (self._filter == 'hl_purple' and a['type'] == 'label')]
+            if self._filter == 'hl_purple':
+                shown = [a for a in all_annots
+                         if a['type'] in ('hl_purple', 'label')]
+            elif self._filter == 'note':
+                shown = [a for a in all_annots if a['type'] == 'note']
+            else:
+                shown = [a for a in all_annots if a['type'] == self._filter]
         else:
             shown = all_annots
 
         for annot in shown:
-            card = self._make_card(annot)
+            line_no = file_text[:annot.get('start', 0)].count('\n') + 1 if file_text else 0
+            card = self._make_card(annot, line_no)
             self._layout.insertWidget(self._layout.count() - 1, card)
             self._cards[annot['id']] = card
 
-    def _make_card(self, annot: dict) -> QFrame:
+    def _make_card(self, annot: dict, line_no: int = 0) -> QFrame:
         # 兼容旧 'label' 类型
         if annot['type'] == 'label':
             dot = '#c4b0f8'
@@ -537,7 +548,7 @@ class AnnotPanel(QWidget):
         lay.setContentsMargins(10, 8, 6, 8)
         lay.setSpacing(4)
 
-        # 顶栏：类型标签 / 标签名 pill + 删除按钮
+        # 顶栏：类型标签 / 标签名 pill + 行号 + 删除按钮
         top = QHBoxLayout()
         if label_text:
             type_lbl = QLabel(f'  # {card_label}  ')
@@ -550,6 +561,10 @@ class AnnotPanel(QWidget):
             type_lbl.setStyleSheet(f"color: {dot}; font-size: 11px;")
         top.addWidget(type_lbl)
         top.addStretch()
+        if line_no:
+            ln_lbl = QLabel(f'L{line_no}')
+            ln_lbl.setStyleSheet(f"color: {C['fg_dim']}; font-size: 10px;")
+            top.addWidget(ln_lbl)
         del_btn = QPushButton('✕')
         del_btn.setFixedSize(18, 18)
         del_btn.setStyleSheet(f"""
@@ -763,6 +778,36 @@ class DocHighlighter(QSyntaxHighlighter):
                     self.setFormat(m.start(), m.end() - m.start(), fmt)
 
 
+# ── 焦点模式遮罩层 ────────────────────────────────────────────────────────
+
+class FocusOverlay(QWidget):
+    """透明覆盖层，在焦点模式下遮暗当前段落以外的区域"""
+    def __init__(self, editor: 'TxtEditor'):
+        super().__init__(editor.viewport())
+        self._editor = editor
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self.hide()
+
+    def paintEvent(self, event):
+        cur_block = self._editor.textCursor().block()
+        if not cur_block.isValid():
+            return
+        block_rect = self._editor.blockBoundingGeometry(cur_block).translated(
+            self._editor.contentOffset()).toRect()
+
+        dim = QColor(C['bg'])
+        dim.setAlpha(170)
+        painter = QPainter(self)
+        vp = self.rect()
+        if block_rect.top() > 0:
+            painter.fillRect(0, 0, vp.width(), block_rect.top(), dim)
+        if block_rect.bottom() < vp.bottom():
+            painter.fillRect(0, block_rect.bottom(), vp.width(),
+                             vp.bottom() - block_rect.bottom(), dim)
+        painter.end()
+
+
 # ── txt 编辑器 ───────────────────────────────────────────────────────────
 
 class TxtEditor(QTextEdit):
@@ -770,12 +815,14 @@ class TxtEditor(QTextEdit):
 
     def __init__(self, store: FileStore, parent=None):
         super().__init__(parent)
-        self.store    = store
+        self.store       = store
         self._fp: str | None = None
-        self._loading = False
+        self._loading    = False
+        self._focus_mode = False
         self._highlighter = DocHighlighter(self.document(), store)
 
         # 字体
+        self._font_size  = 18
         self._set_font()
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
@@ -837,15 +884,26 @@ class TxtEditor(QTextEdit):
         self._wc_timer.timeout.connect(self._breathe_count)
         self._wc_timer.start()
 
+        # 焦点模式遮罩
+        self._overlay = FocusOverlay(self)
+        self.cursorPositionChanged.connect(self._overlay.update)
+
     def _set_font(self):
-        # 尝试加载 LXGW WenKai，回退到系统字体
-        f = QFont('LXGW WenKai', 18)
+        if not hasattr(self, '_font_size'):
+            self._font_size = 18
+        f = QFont('LXGW WenKai', self._font_size)
         if not f.exactMatch():
-            f = QFont('PingFang SC', 18)
+            f = QFont('PingFang SC', self._font_size)
         f.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
         self.setFont(f)
-        # 行间距 1.65（研究最优值：中文黑底）
         self._apply_line_spacing()
+
+    def adjust_font_size(self, delta: int):
+        """调整字号，delta=+1 放大，delta=-1 缩小"""
+        self._font_size = max(12, min(28, self._font_size + delta))
+        self._set_font()
+        if self._fp:
+            self._apply_line_spacing()
 
     def _apply_line_spacing(self):
         from PyQt6.QtGui import QTextBlockFormat
@@ -978,6 +1036,48 @@ class TxtEditor(QTextEdit):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._position_count_lbl()
+        self._apply_reading_width()
+
+    def _apply_reading_width(self):
+        """动态计算左右 padding，使内容区不超过 700px（约 35 个汉字）"""
+        vw = self.viewport().width()
+        max_content = 700
+        h_pad = max(60, (vw - max_content) // 2)
+        self.setStyleSheet(f"""
+            QTextEdit {{
+                background: {C['bg']}; color: {C['fg']};
+                border: none; padding: 56px {h_pad}px;
+                selection-background-color: #4a4a55;
+                selection-color: #e0e0e0;
+            }}
+            QScrollBar:vertical {{
+                background: transparent; width: 6px; margin: 0;
+            }}
+            QScrollBar::handle:vertical {{
+                background: #3a3a3e; border-radius: 3px; min-height: 30px;
+            }}
+            QScrollBar::handle:vertical:hover {{ background: #555558; }}
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {{ height: 0; }}
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {{ background: transparent; }}
+        """)
+
+    def set_focus_mode(self, enabled: bool):
+        self._focus_mode = enabled
+        if enabled:
+            self._overlay.setGeometry(self.viewport().rect())
+            self._overlay.show()
+            self._overlay.update()
+        else:
+            self._overlay.hide()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._position_count_lbl()
+        self._apply_reading_width()
+        if hasattr(self, '_overlay'):
+            self._overlay.setGeometry(self.viewport().rect())
 
     def contextMenuEvent(self, event):
         menu = QMenu(self)
@@ -2797,6 +2897,13 @@ class MainWindow(QMainWindow):
         vm.addAction(self._annot_panel_action)
         vm.addSeparator()
         _act(vm, '禅定模式', self._toggle_zen, 'Ctrl+Shift+Z')
+        self._focus_action = QAction('焦点模式', self)
+        self._focus_action.setCheckable(True)
+        self._focus_action.setChecked(False)
+        self._focus_action.setShortcut(QKeySequence('Ctrl+Shift+F'))
+        self._focus_action.triggered.connect(
+            lambda checked: self._txt_editor.set_focus_mode(checked))
+        vm.addAction(self._focus_action)
         vm.addSeparator()
         _act(vm, '跳到文章开头', self._go_top,    'Ctrl+Up')
         _act(vm, '跳到文章末尾', self._go_bottom, 'Ctrl+Down')
@@ -3222,6 +3329,16 @@ class MainWindow(QMainWindow):
                 self._close_search()
             elif self._note_bar.isVisible():
                 self._note_bar.hide()
+        # 字号调节：Ctrl+= 放大，Ctrl+- 缩小
+        elif event.modifiers() & MOD:
+            if event.key() in (Qt.Key.Key_Equal, Qt.Key.Key_Plus):
+                self._txt_editor.adjust_font_size(+1)
+                self.statusBar().showMessage(f'字号 {self._txt_editor._font_size}px', 1500)
+                return
+            elif event.key() == Qt.Key.Key_Minus:
+                self._txt_editor.adjust_font_size(-1)
+                self.statusBar().showMessage(f'字号 {self._txt_editor._font_size}px', 1500)
+                return
         super().keyPressEvent(event)
 
     # ── 拖放文件 ──────────────────────────────────────────────
