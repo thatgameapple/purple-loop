@@ -1141,98 +1141,43 @@ class TxtEditor(QTextEdit):
 
 
 
-# ── 菜单图标绘制 ──────────────────────────────────────────────────────────
+# ── 菜单图标：用系统字体渲染 Unicode 字符，清晰无锯齿 ─────────────────────
 
-def _mk_menu_icon(shape: str, color: str = '#9a9a9a', lsize: int = 15) -> QIcon:
-    """
-    用 QPainter 绘制简洁单色线形图标，HiDPI 2x 渲染。
-    shape: 'pin' | 'pencil' | 'trash'
-    """
-    dpr = 2
-    px  = QPixmap(lsize * dpr, lsize * dpr)
+# 选用标准 Unicode，macOS 下这几个字符在 Apple Symbols / PingFang 里都有干净的矢量字形
+_MENU_ICON_CHARS = {
+    'pin':    '\u2605',   # ★  实心五角星 → 置顶
+    'pencil': '\u270e',   # ✎  铅笔
+    'trash':  '\u2672',   # ♲  回收符号（垃圾桶语义，在 Apple Symbols 里有干净字形）
+}
+
+def _mk_menu_icon(shape: str, color: str = '#9a9a9a', lsize: int = 14) -> QIcon:
+    """用 QPainter.drawText 渲染 Unicode 字形，HiDPI 清晰。"""
+    from PyQt6.QtCore import QRectF
+    char = _MENU_ICON_CHARS.get(shape, '•')
+    dpr  = 2
+    pw   = lsize * dpr
+    px   = QPixmap(pw, pw)
     px.setDevicePixelRatio(dpr)
     px.fill(Qt.GlobalColor.transparent)
 
     p = QPainter(px)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    c = QColor(color)
-
-    def mk_pen(w=1.25):
-        return QPen(c, w, Qt.PenStyle.SolidLine,
-                    Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-
-    s = float(lsize)
-
-    if shape == 'pin':
-        # 图钉：菱形头部（实心）+ 针杆斜线
-        p.setPen(mk_pen(1.1))
-        p.setBrush(c)
-        diamond = QPolygonF([
-            _pt(s, 0.50, 0.07),
-            _pt(s, 0.83, 0.40),
-            _pt(s, 0.56, 0.63),
-            _pt(s, 0.23, 0.40),
-        ])
-        p.drawPolygon(diamond)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(mk_pen(1.4))
-        p.drawLine(_pt(s, 0.47, 0.63), _pt(s, 0.12, 0.92))
-
-    elif shape == 'pencil':
-        # 铅笔：斜矩形轮廓 + 笔尖三角（实心）
-        p.setPen(mk_pen(1.2))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        body = QPolygonF([
-            _pt(s, 0.22, 0.88),
-            _pt(s, 0.10, 0.68),
-            _pt(s, 0.72, 0.06),
-            _pt(s, 0.90, 0.26),
-        ])
-        p.drawPolygon(body)
-        # 笔尖
-        p.setBrush(c)
-        tip = QPolygonF([
-            _pt(s, 0.22, 0.88),
-            _pt(s, 0.10, 0.68),
-            _pt(s, 0.04, 0.96),
-        ])
-        p.drawPolygon(tip)
-        # 橡皮端分隔线
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawLine(_pt(s, 0.72, 0.06), _pt(s, 0.90, 0.26))
-
-    elif shape == 'trash':
-        # 垃圾桶：把手小矩形 + 盖子横线 + 桶身梯形 + 两条内竖线
-        from PyQt6.QtCore import QRectF
-        p.setPen(mk_pen(1.2))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        # 把手
-        p.drawRoundedRect(QRectF(s*0.37, s*0.06, s*0.26, s*0.16), 2, 2)
-        # 盖子线
-        p.drawLine(_pt(s, 0.13, 0.29), _pt(s, 0.87, 0.29))
-        # 桶身（开口梯形 + 底）
-        p.drawLine(_pt(s, 0.21, 0.29), _pt(s, 0.27, 0.91))
-        p.drawLine(_pt(s, 0.79, 0.29), _pt(s, 0.73, 0.91))
-        p.drawLine(_pt(s, 0.27, 0.91), _pt(s, 0.73, 0.91))
-        # 内竖线
-        p.drawLine(_pt(s, 0.40, 0.40), _pt(s, 0.38, 0.82))
-        p.drawLine(_pt(s, 0.60, 0.40), _pt(s, 0.62, 0.82))
-
+    p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+    p.setPen(QColor(color))
+    # 用 Apple Symbols 优先，fallback 到 PingFang SC
+    f = QFont('Apple Symbols')
+    f.setPixelSize(int(lsize * 0.9))
+    f.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+    p.setFont(f)
+    p.drawText(QRectF(0, 0, lsize, lsize), Qt.AlignmentFlag.AlignCenter, char)
     p.end()
     return QIcon(px)
-
-
-def _pt(s: float, rx: float, ry: float):
-    """辅助：按比例生成 QPointF"""
-    from PyQt6.QtCore import QPointF
-    return QPointF(s * rx, s * ry)
 
 
 # ── 红色删除菜单项（QWidgetAction） ──────────────────────────────────────
 
 class _RedMenuAction(QWidgetAction):
-    """菜单内红色可点击条目，用于「删除标签」；布局与图标 action 对齐。"""
-    _RED = '#e05555'
+    """菜单内删除条目：低饱和紫色，与 app 整体风格统一。"""
+    _CLR = '#9a8fcc'   # 低饱和紫，比 accent 稍亮，区别于普通项
 
     def __init__(self, text: str, callback, menu: QMenu):
         super().__init__(menu)
@@ -1241,13 +1186,12 @@ class _RedMenuAction(QWidgetAction):
 
         w = QWidget()
         lay = QHBoxLayout(w)
-        # 左侧留 6px 与 QMenu::item 的左 padding 对齐，图标 15px + 间距 6px
         lay.setContentsMargins(6, 4, 20, 4)
         lay.setSpacing(6)
 
-        # 图标（与普通 action 的图标列宽一致）
+        # 图标
         ico_lbl = QLabel()
-        pix = _mk_menu_icon('trash', self._RED, 15).pixmap(QSize(15, 15))
+        pix = _mk_menu_icon('trash', self._CLR, 14).pixmap(QSize(15, 15))
         ico_lbl.setPixmap(pix)
         ico_lbl.setFixedSize(QSize(15, 15))
         lay.addWidget(ico_lbl)
@@ -1255,13 +1199,13 @@ class _RedMenuAction(QWidgetAction):
         # 文字
         txt_lbl = QLabel(text)
         txt_lbl.setStyleSheet(
-            f'color: {self._RED}; font-size: 13px; background: transparent;')
+            f'color: {self._CLR}; font-size: 13px; background: transparent;')
         lay.addWidget(txt_lbl)
         lay.addStretch()
 
         w.setStyleSheet(
             'QWidget { border-radius: 4px; background: transparent; }'
-            'QWidget:hover { background: rgba(224, 85, 85, 35); }'
+            'QWidget:hover { background: rgba(124, 111, 168, 40); }'
         )
         w.setCursor(Qt.CursorShape.PointingHandCursor)
         w.mousePressEvent = lambda ev: (self._menu.close(), self._cb())
@@ -1521,7 +1465,7 @@ class Sidebar(QTreeWidget):
         QMenu::separator {{ background: {C['border']}; height: 1px; margin: 4px 8px; }}
     """
     # 图标颜色与侧边栏 fg 一致
-    _ICO_CLR  = '#9a9aaa'
+    _ICO_CLR  = '#8c82bb'   # 低饱和紫，与 app 调性一致
 
     def _show_tag_menu(self, item: QTreeWidgetItem, data: tuple, global_pos: QPoint):
         """弹出标签操作菜单（供右键和 ··· 按钮共用）"""
@@ -1535,7 +1479,7 @@ class Sidebar(QTreeWidget):
         # 置顶 / 取消置顶
         pin_text = '取消置顶' if tag_path in pinned else '置顶'
         pa = menu.addAction(pin_text)
-        pa.setIcon(_mk_menu_icon('pin', self._ICO_CLR))
+        pa.setIcon(_mk_menu_icon('pin', C['accent']))
         pa.triggered.connect(lambda _, t=tag_path: self._toggle_pin(t))
 
         # 重命名 / 合并 / 删除（仅普通标签）
