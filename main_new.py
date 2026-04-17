@@ -802,7 +802,8 @@ class TxtEditor(QTextEdit):
         self._font_size  = 18
         self._set_font()
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        self.setLineWrapMode(QTextEdit.LineWrapMode.FixedPixelWidth)
+        self.setLineWrapColumnOrWidth(700)
         self.setStyleSheet(f"""
             QTextEdit {{
                 background: {C['bg']}; color: {C['fg']};
@@ -1021,11 +1022,15 @@ class TxtEditor(QTextEdit):
         self._apply_reading_width()
 
     def _apply_reading_width(self):
-        """动态计算左侧 padding 控制行宽，右侧固定 8px 使滚动条贴近右边框"""
+        """FixedPixelWidth 硬限行宽，左侧 padding 居中，右侧 8px 使滚动条贴边"""
         w = self.width()
         max_content = 700
-        # 只用左边 padding 控制内容宽度，右边 8px 让滚动条几乎贴着边框
-        left_pad = max(60, (w - max_content - 8 - 6) // 2)   # 6px=滚动条宽度，除2居中
+        right_pad, scrollbar_w = 8, 6
+        # 行宽：窗口够宽则固定 700，否则缩小以适配
+        wrap_w = min(max_content, max(200, w - 2 * 60 - right_pad - scrollbar_w))
+        self.setLineWrapColumnOrWidth(wrap_w)
+        # 左侧 padding 让内容居中（两侧视觉空白对称）
+        left_pad = max(60, (w - wrap_w - right_pad - scrollbar_w) // 2)，除2居中
         self.setStyleSheet(f"""
             QTextEdit {{
                 background: {C['bg']}; color: {C['fg']};
