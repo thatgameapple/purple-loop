@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QTextEdit, QScrollArea, QLabel, QVBoxLayout, QHBoxLayout,
     QPushButton, QLineEdit, QFrame, QMenu, QFileDialog, QInputDialog,
     QMessageBox, QSizePolicy, QAbstractScrollArea, QDialog, QButtonGroup,
-    QProgressBar, QComboBox
+    QProgressBar, QComboBox, QGraphicsOpacityEffect
 )
 from PyQt6.QtGui import (
     QColor, QFont, QTextCharFormat, QTextCursor, QTextDocument,
@@ -21,7 +21,6 @@ from PyQt6.QtCore import (
     Qt, QTimer, QSize, QPoint, QRect, pyqtSignal, QThread, QObject,
     QPropertyAnimation, QEasingCurve
 )
-from PyQt6.QtWidgets import QGraphicsOpacityEffect
 
 
 # ── 常量 ──────────────────────────────────────────────────────────────────
@@ -1047,44 +1046,6 @@ class TxtEditor(QTextEdit):
         self._position_count_lbl()
         self._apply_reading_width()
 
-    def wheelEvent(self, event):
-        """平滑滚动（基于 Pavel Fatin 研究 + VS Code 实践）"""
-        sb = self.verticalScrollBar()
-
-        # macOS 轨迹板：系统已做动量处理，直接透传避免双重平滑
-        if not event.pixelDelta().isNull():
-            super().wheelEvent(event)
-            return
-
-        angle = event.angleDelta().y()
-        if angle == 0:
-            super().wheelEvent(event)
-            return
-
-        # 鼠标滚轮：每 notch=120 单位，步长 80px ≈ 3 行（行高~24px）
-        steps = angle / 120.0
-        step_px = 80
-        delta = -int(steps * step_px)
-
-        if not hasattr(self, '_scroll_anim'):
-            self._scroll_anim = QPropertyAnimation(sb, b'value', self)
-            self._scroll_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-            self._scroll_anim.setDuration(150)   # Pavel Fatin 最优值 ~140ms
-            self._scroll_target = sb.value()
-
-        anim = self._scroll_anim
-        # 连续滚动时从上次目标值叠加，不从当前位置重算（避免卡顿感）
-        if anim.state() == QPropertyAnimation.State.Running:
-            anim.stop()
-        else:
-            self._scroll_target = sb.value()
-
-        self._scroll_target = max(sb.minimum(),
-                                  min(sb.maximum(), self._scroll_target + delta))
-        anim.setStartValue(sb.value())
-        anim.setEndValue(self._scroll_target)
-        anim.start()
-        event.accept()
 
     def contextMenuEvent(self, event):
         menu = QMenu(self)
