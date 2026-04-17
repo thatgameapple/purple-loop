@@ -10,7 +10,8 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QTextEdit, QScrollArea, QLabel, QVBoxLayout, QHBoxLayout,
     QPushButton, QLineEdit, QFrame, QMenu, QFileDialog, QInputDialog,
     QMessageBox, QSizePolicy, QAbstractScrollArea, QDialog, QButtonGroup,
-    QProgressBar, QComboBox, QGraphicsOpacityEffect, QToolButton
+    QProgressBar, QComboBox, QGraphicsOpacityEffect, QToolButton,
+    QStyledItemDelegate
 )
 from PyQt6.QtGui import (
     QColor, QFont, QTextCharFormat, QTextCursor, QTextDocument,
@@ -1556,6 +1557,51 @@ class SearchPanel(QFrame):
             self._count_lbl.setText(str(n))
 
 
+# ── 下拉列表 hover delegate（macOS 原生样式会覆盖 stylesheet，需手动绘制）──
+
+class _ComboHoverDelegate(QStyledItemDelegate):
+    """给 QComboBox 的下拉列表提供低饱和紫色 hover/selected 效果"""
+    _HOVER    = QColor(124, 111, 168, 55)
+    _SELECTED = QColor(124, 111, 168, 90)
+    _BG       = QColor(C['bg_input'])
+    _FG       = QColor(C['fg'])
+
+    def paint(self, painter, option, index):
+        from PyQt6.QtWidgets import QStyle
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        is_hover    = bool(option.state & QStyle.StateFlag.State_MouseOver)
+
+        if is_selected:
+            painter.fillRect(option.rect, self._SELECTED)
+        elif is_hover:
+            painter.fillRect(option.rect, self._HOVER)
+        else:
+            painter.fillRect(option.rect, self._BG)
+
+        # 勾选标记（当前选中项）
+        check_data = index.data(Qt.ItemDataRole.CheckStateRole)
+        left = option.rect.left() + 10
+        if check_data == Qt.CheckState.Checked:
+            painter.setPen(self._FG)
+            painter.drawText(
+                option.rect.adjusted(left - 8, 0, 0, 0),
+                Qt.AlignmentFlag.AlignVCenter, '✓')
+            left += 14
+
+        painter.setPen(self._FG)
+        text_rect = option.rect.adjusted(left, 0, -8, 0)
+        text = index.data(Qt.ItemDataRole.DisplayRole) or ''
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter, text)
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        sh = super().sizeHint(option, index)
+        return sh.__class__(sh.width(), max(sh.height(), 26))
+
+
 # ── 全局搜索窗口 ──────────────────────────────────────────────────────────
 
 class GlobalSearchDialog(QDialog):
@@ -1585,7 +1631,17 @@ class GlobalSearchDialog(QDialog):
         QComboBox QAbstractItemView {{
             background: {C['bg_input']}; color: {C['fg']};
             border: 1px solid {C['border']};
-            selection-background-color: {C['bg_sel']};
+            selection-background-color: transparent;
+            outline: none;
+        }}
+        QComboBox QAbstractItemView::item {{
+            padding: 4px 8px;
+        }}
+        QComboBox QAbstractItemView::item:hover {{
+            background: {C['accent']}28; color: {C['fg']};
+        }}
+        QComboBox QAbstractItemView::item:selected {{
+            background: {C['accent']}40; color: {C['fg']};
         }}
     """
 
@@ -1649,6 +1705,12 @@ class GlobalSearchDialog(QDialog):
         self._tag_combo.setSizeAdjustPolicy(
             QComboBox.SizeAdjustPolicy.AdjustToContents)
         self._tag_combo.currentIndexChanged.connect(lambda: self._run_search())
+        # macOS 原生样式覆盖 stylesheet，用自定义 delegate 绘制 hover
+        self._tag_combo.view().setStyleSheet(
+            f"QAbstractItemView {{ background: {C['bg_input']};"
+            f"border: 1px solid {C['border']}; outline: none; }}")
+        self._tag_combo.view().setItemDelegate(_ComboHoverDelegate(self._tag_combo))
+        self._tag_combo.view().setMouseTracking(True)
         h_lay.addWidget(self._tag_combo)
 
         # 有标注
@@ -2449,7 +2511,17 @@ class FillerAnalysisDialog(QDialog):
         QComboBox QAbstractItemView {{
             background: {C['bg_input']}; color: {C['fg']};
             border: 1px solid {C['border']};
-            selection-background-color: {C['bg_sel']};
+            selection-background-color: transparent;
+            outline: none;
+        }}
+        QComboBox QAbstractItemView::item {{
+            padding: 4px 8px;
+        }}
+        QComboBox QAbstractItemView::item:hover {{
+            background: {C['accent']}28; color: {C['fg']};
+        }}
+        QComboBox QAbstractItemView::item:selected {{
+            background: {C['accent']}40; color: {C['fg']};
         }}
         QPushButton {{
             background: {C['accent']}; color: white;
