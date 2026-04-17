@@ -1252,8 +1252,8 @@ class _SidebarTagDelegate(QStyledItemDelegate):
     - 所有行：hover/selected 背景透明（由 QSS 关闭默认背景，委托自己画）
     """
     _BTN_W    = 26
-    _FG_IDLE  = QColor(130, 118, 170, 180)
-    _BTN_HV   = QColor(124, 111, 168, 60)
+    _FG_IDLE  = QColor(160, 155, 175, 130)  # 和侧边栏文字同色系，低对比度融入背景
+    _BTN_HV   = QColor(255, 255, 255, 0)    # 无背景，不画框
     _HV_BG    = QColor(255, 255, 255, 8)    # 极浅白色背景，hover 时显示
     _HV_LINE  = QColor(100, 95, 130, 180)   # hover 左侧细线
     _ACT_LINE = QColor(C['accent'])          # active 左侧亮线
@@ -1324,12 +1324,8 @@ class _SidebarTagDelegate(QStyledItemDelegate):
             return
 
         btn = self._btn_rect(r)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(self._BTN_HV)
-        painter.drawRoundedRect(btn, 4, 4)
         painter.setPen(self._FG_IDLE)
-        f2 = QFont('PingFang SC', 13)
-        f2.setBold(True)
+        f2 = QFont('PingFang SC', 12)
         painter.setFont(f2)
         painter.drawText(btn, Qt.AlignmentFlag.AlignCenter, '···')
         painter.restore()
@@ -3199,8 +3195,8 @@ class MainWindow(QMainWindow):
 
         # ── 左侧栏 ─────────────────────────────────────────────
         sidebar_wrap = QWidget()
-        sidebar_wrap.setMinimumWidth(180)
-        sidebar_wrap.setMaximumWidth(320)
+        sidebar_wrap.setMinimumWidth(240)
+        sidebar_wrap.setMaximumWidth(400)
         sidebar_wrap.setStyleSheet(f"background: {C['bg_sidebar']};")
         sw_lay = QVBoxLayout(sidebar_wrap)
         sw_lay.setContentsMargins(0, 0, 0, 0)
@@ -3315,7 +3311,7 @@ class MainWindow(QMainWindow):
 
         right_lay.addWidget(self._content_split, 1)
         self._split.addWidget(right_wrap)
-        self._split.setSizes([240, 1040])
+        self._split.setSizes([280, 1000])
 
         # 浮动标注工具条
         self._annot_bar = AnnotBar()
