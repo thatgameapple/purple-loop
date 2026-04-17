@@ -3757,6 +3757,26 @@ class MainWindow(QMainWindow):
         self._annot_bar.hide()
 
         dlg = LabelDialog(self)
+
+        # 把弹窗定位到选区下方（同 AnnotBar 逻辑，用 viewport 坐标）
+        ed   = self._txt_editor
+        vp   = ed.viewport()
+        end  = max(cur.position(), cur.anchor())
+        strt = min(cur.position(), cur.anchor())
+        lc   = QTextCursor(ed.document())
+        lc.setPosition(max(strt, end - 1))
+        er      = ed.cursorRect(lc)
+        line_h  = er.height()
+        bl_glob = vp.mapToGlobal(er.bottomLeft())
+        dlg.adjustSize()
+        sh  = dlg.sizeHint()
+        scr = QApplication.primaryScreen().geometry()
+        dx  = bl_glob.x() - sh.width() // 2
+        dy  = bl_glob.y() + max(6, line_h // 3)
+        dx  = max(4, min(dx, scr.width()  - sh.width()  - 4))
+        dy  = max(4, min(dy, scr.height() - sh.height() - 4))
+        dlg.move(dx, dy)
+
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
 
