@@ -1048,25 +1048,41 @@ class TxtEditor(QTextEdit):
         self._apply_reading_width()
 
     def wheelEvent(self, event):
-        """平滑滚动：将一次滚动分成多帧插值执行"""
+        """平滑滚动（基于 Pavel Fatin 研究 + VS Code 实践）"""
         sb = self.verticalScrollBar()
-        delta = event.angleDelta().y()
-        if delta == 0:
+
+        # macOS 轨迹板：系统已做动量处理，直接透传避免双重平滑
+        if not event.pixelDelta().isNull():
             super().wheelEvent(event)
             return
-        # 目标偏移量（负值=向下，正值=向上），乘以系数控制速度
-        step = int(-delta * 0.8)
+
+        angle = event.angleDelta().y()
+        if angle == 0:
+            super().wheelEvent(event)
+            return
+
+        # 鼠标滚轮：每 notch=120 单位，步长 80px ≈ 3 行（行高~24px）
+        steps = angle / 120.0
+        step_px = 80
+        delta = -int(steps * step_px)
+
         if not hasattr(self, '_scroll_anim'):
             self._scroll_anim = QPropertyAnimation(sb, b'value', self)
             self._scroll_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-            self._scroll_anim.setDuration(180)
+            self._scroll_anim.setDuration(150)   # Pavel Fatin 最优值 ~140ms
+            self._scroll_target = sb.value()
+
         anim = self._scroll_anim
-        # 若动画正在进行，从当前终点继续叠加，避免丢帧
-        current_end = anim.endValue() if anim.state() == QPropertyAnimation.State.Running else sb.value()
-        new_end = max(sb.minimum(), min(sb.maximum(), int(current_end) + step))
-        anim.stop()
+        # 连续滚动时从上次目标值叠加，不从当前位置重算（避免卡顿感）
+        if anim.state() == QPropertyAnimation.State.Running:
+            anim.stop()
+        else:
+            self._scroll_target = sb.value()
+
+        self._scroll_target = max(sb.minimum(),
+                                  min(sb.maximum(), self._scroll_target + delta))
         anim.setStartValue(sb.value())
-        anim.setEndValue(new_end)
+        anim.setEndValue(self._scroll_target)
         anim.start()
         event.accept()
 
