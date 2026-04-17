@@ -20,7 +20,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtCore import (
     Qt, QTimer, QSize, QPoint, QRect, pyqtSignal, QThread, QObject,
-    QPropertyAnimation, QEasingCurve
+    QPropertyAnimation, QEasingCurve, QFileSystemWatcher
 )
 
 
@@ -3172,6 +3172,7 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._refresh_sidebar()
         self._apply_theme()
+        self._setup_fs_watcher()
 
     # ── 字体 ──────────────────────────────────────────────────
     def _load_fonts(self):
@@ -3557,11 +3558,47 @@ class MainWindow(QMainWindow):
     def _refresh_sidebar(self):
         txt_files = self.store.get_txt_files()
         self._sidebar.refresh(txt_files)
+        self._update_fs_watcher(txt_files)
+
+    def _setup_fs_watcher(self):
+        """监听已注册目录的文件系统变化，外部删除/新增文件时自动刷新侧栏"""
+        self._fs_watcher = QFileSystemWatcher(self)
+        self._fs_watcher.directoryChanged.connect(self._on_dir_changed)
+        self._fs_watcher.fileChanged.connect(self._on_file_changed)
+        self._update_fs_watcher(self.store.get_txt_files())
+
+    def _update_fs_watcher(self, txt_files: list[str]):
+        """把 txt_files 涉及的所有目录加入监听"""
+        watcher = getattr(self, '_fs_watcher', None)
+        if watcher is None:
+            return
+        dirs = {str(Path(f).parent) for f in txt_files}
+        existing = set(watcher.directories())
+        to_add = list(dirs - existing)
+        if to_add:
+            watcher.addPaths(to_add)
+        # 同时监听每个文件本身（删除时触发 fileChanged）
+        existing_files = set(watcher.files())
+        to_add_files = [f for f in txt_files if f not in existing_files]
+        if to_add_files:
+            watcher.addPaths(to_add_files)
+
+    def _on_dir_changed(self, _path: str):
+        """目录内容变化（新增/删除文件）→ 刷新侧栏"""
+        self._refresh_sidebar()
+
+    def _on_file_changed(self, path: str):
+        """文件本身被删除或修改 → 刷新侧栏；若是当前打开的文件则清空编辑区"""
+        self._refresh_sidebar()
+        if path == self._fp and not Path(path).exists():
+            self._fp = None
+            self._txt_editor.setPlainText('')
+            self.statusBar().showMessage(f'文件已被删除：{Path(path).name}', 4000)
 
     # ── 文件操作 ──────────────────────────────────────────────
     def _open_file(self, path: str):
         if not Path(path).exists():
-            self._sidebar.refresh()   # 刷新侧栏，让已删除的文件消失
+            self._refresh_sidebar()   # 刷新侧栏，让已删除的文件消失
             self.statusBar().showMessage(f'文件已被删除：{Path(path).name}', 4000)
             return
         self._fp = path
