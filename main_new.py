@@ -1030,7 +1030,7 @@ class TxtEditor(QTextEdit):
         wrap_w = min(max_content, max(200, w - 2 * 60 - right_pad - scrollbar_w))
         self.setLineWrapColumnOrWidth(wrap_w)
         # 左侧 padding 让内容居中（两侧视觉空白对称）
-        left_pad = max(60, (w - wrap_w - right_pad - scrollbar_w) // 2)，除2居中
+        left_pad = max(60, (w - wrap_w - right_pad - scrollbar_w) // 2)
         self.setStyleSheet(f"""
             QTextEdit {{
                 background: {C['bg']}; color: {C['fg']};
