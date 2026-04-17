@@ -18,8 +18,10 @@ from PyQt6.QtGui import (
     QPainter, QFontDatabase, QCursor
 )
 from PyQt6.QtCore import (
-    Qt, QTimer, QSize, QPoint, QRect, pyqtSignal, QThread, QObject
+    Qt, QTimer, QSize, QPoint, QRect, pyqtSignal, QThread, QObject,
+    QPropertyAnimation, QEasingCurve
 )
+from PyQt6.QtWidgets import QGraphicsOpacityEffect
 
 
 # ── 常量 ──────────────────────────────────────────────────────────────────
@@ -1044,6 +1046,29 @@ class TxtEditor(QTextEdit):
         super().resizeEvent(event)
         self._position_count_lbl()
         self._apply_reading_width()
+
+    def wheelEvent(self, event):
+        """平滑滚动：将一次滚动分成多帧插值执行"""
+        sb = self.verticalScrollBar()
+        delta = event.angleDelta().y()
+        if delta == 0:
+            super().wheelEvent(event)
+            return
+        # 目标偏移量（负值=向下，正值=向上），乘以系数控制速度
+        step = int(-delta * 0.8)
+        if not hasattr(self, '_scroll_anim'):
+            self._scroll_anim = QPropertyAnimation(sb, b'value', self)
+            self._scroll_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self._scroll_anim.setDuration(180)
+        anim = self._scroll_anim
+        # 若动画正在进行，从当前终点继续叠加，避免丢帧
+        current_end = anim.endValue() if anim.state() == QPropertyAnimation.State.Running else sb.value()
+        new_end = max(sb.minimum(), min(sb.maximum(), int(current_end) + step))
+        anim.stop()
+        anim.setStartValue(sb.value())
+        anim.setEndValue(new_end)
+        anim.start()
+        event.accept()
 
     def contextMenuEvent(self, event):
         menu = QMenu(self)
@@ -2712,10 +2737,15 @@ class MainWindow(QMainWindow):
         self._txt_editor = TxtEditor(self.store)
         self._txt_editor.mouse_released.connect(self._on_mouse_released)
         self._txt_editor._save_timer.timeout.connect(self._refresh_sidebar)
-        self._empty_lbl  = QLabel('将文件拖入此处，或双击左侧文件打开')
+        self._empty_lbl = QLabel('purple loop\n祝你引流无量')
         self._empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_lbl.setStyleSheet(
-            f"color: {C['fg_dim']}; font-size: 16px; background: {C['bg']};")
+        self._empty_lbl.setStyleSheet(f"""
+            color: #2e2f33;
+            font-size: 22px;
+            font-family: 'LXGW WenKai', 'PingFang SC';
+            line-height: 2;
+            background: {C['bg']};
+        """)
 
         self._stack.addWidget(self._empty_lbl)
         self._stack.addWidget(self._txt_editor)
@@ -2920,24 +2950,49 @@ class MainWindow(QMainWindow):
     # ── 禅定模式 ──────────────────────────────────────────────
     def _toggle_zen(self):
         self._zen = not self._zen
-        if self._zen:
+        entering = self._zen
+
+        # 需要淡出/淡入的 widget 列表
+        targets = [
+            self._split.widget(0),   # 侧栏
+            self.menuBar(),
+            self.statusBar(),
+            self._progress_bar,
+            self._txt_editor._count_lbl,
+        ]
+        if self._annot_panel_action.isChecked():
+            targets.append(self._annot_panel)
+
+        if entering:
             self._pre_zen_annot = self._annot_panel_action.isChecked()
-            self._split.widget(0).hide()
-            self._annot_panel.hide()
             self._annot_panel_action.setChecked(False)
-            self.menuBar().hide()
-            self.statusBar().hide()
-            self._progress_bar.hide()
-            self._txt_editor._count_lbl.hide()
+            self._fade_widgets(targets, fade_in=False,
+                               on_done=lambda: [w.hide() for w in targets])
         else:
-            self._split.widget(0).show()
+            for w in targets:
+                w.show()
+            self._fade_widgets(targets, fade_in=True)
             if self._pre_zen_annot:
                 self._annot_panel.show()
                 self._annot_panel_action.setChecked(True)
-            self.menuBar().show()
-            self.statusBar().show()
-            self._progress_bar.show()
-            self._txt_editor._count_lbl.show()
+
+    def _fade_widgets(self, widgets, fade_in: bool, on_done=None):
+        """对多个 widget 同时做淡入/淡出动画（150ms）"""
+        start, end = (0.0, 1.0) if fade_in else (1.0, 0.0)
+        anims = []
+        for w in widgets:
+            effect = QGraphicsOpacityEffect(w)
+            w.setGraphicsEffect(effect)
+            anim = QPropertyAnimation(effect, b'opacity', self)
+            anim.setDuration(150)
+            anim.setStartValue(start)
+            anim.setEndValue(end)
+            anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+            anims.append(anim)
+        if on_done and anims:
+            anims[-1].finished.connect(on_done)
+        for a in anims:
+            a.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
 
     def _toggle_fillers(self):
         enabled = self._filler_action.isChecked()
