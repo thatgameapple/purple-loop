@@ -3707,17 +3707,21 @@ class MainWindow(QMainWindow):
         end   = max(cur.position(), cur.anchor())
         start = min(cur.position(), cur.anchor())
 
-        # 定位到最后一个选中字符（end-1），而非 end 处
+        # !! cursorRect() 返回 viewport 坐标，必须用 viewport().mapToGlobal()
+        # !! 之前用 ed.mapToGlobal() 坐标系错误，导致 y 始终偏上
+        vp = ed.viewport()
+
+        # 定位到最后一个选中字符（end-1），避免 selectionEnd 跑到下一行行首
         last_char = QTextCursor(ed.document())
         last_char.setPosition(max(start, end - 1))
-        end_rect = ed.cursorRect(last_char)
+        end_rect = ed.cursorRect(last_char)          # viewport 坐标
 
-        # bottom() + 行高的 1/3 作为间距（行高已含行间距）
-        line_h = end_rect.height()
-        base_y = ed.mapToGlobal(end_rect.bottomLeft()).y() + max(6, line_h // 3)
+        line_h  = end_rect.height()
+        bl_glob = vp.mapToGlobal(end_rect.bottomLeft())  # 行底部全局坐标
+        base_y  = bl_glob.y() + max(6, line_h // 3)
 
         sh = self._annot_bar.sizeHint()
-        x  = ed.mapToGlobal(end_rect.bottomLeft()).x() - sh.width() // 2
+        x  = bl_glob.x() - sh.width() // 2
         y  = base_y
 
         scr = QApplication.primaryScreen().geometry()
@@ -3725,11 +3729,10 @@ class MainWindow(QMainWindow):
 
         # 下方空间不足 → 翻到选区上方
         if y + sh.height() + 4 > scr.height():
-            start  = min(cur.position(), cur.anchor())
-            tmp2   = QTextCursor(ed.document())
+            tmp2 = QTextCursor(ed.document())
             tmp2.setPosition(start)
-            top_gp = ed.mapToGlobal(ed.cursorRect(tmp2).topLeft())
-            y      = top_gp.y() - sh.height() - 8
+            top_glob = vp.mapToGlobal(ed.cursorRect(tmp2).topLeft())
+            y = top_glob.y() - sh.height() - 8
         y = max(4, y)
         self._annot_bar.move(x, y)
         self._annot_bar.show()
