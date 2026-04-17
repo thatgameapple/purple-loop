@@ -1643,7 +1643,10 @@ class GlobalSearchDialog(QDialog):
         # 标签筛选
         self._tag_combo = QComboBox()
         self._tag_combo.addItem('全部标签', None)
-        self._tag_combo.setFixedWidth(120)
+        self._tag_combo.setMinimumWidth(80)
+        self._tag_combo.setMaximumWidth(150)
+        self._tag_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToContents)
         self._tag_combo.currentIndexChanged.connect(lambda: self._run_search())
         h_lay.addWidget(self._tag_combo)
 
@@ -1782,7 +1785,12 @@ class GlobalSearchDialog(QDialog):
         self._tag_combo.clear()
         self._tag_combo.addItem('全部标签', None)
         for t in sorted(tags):
-            self._tag_combo.addItem(f'#{t}', t)
+            # 只显示最后一段，完整路径放 tooltip
+            leaf = t.split('/')[-1]
+            self._tag_combo.addItem(f'#{leaf}', t)
+            self._tag_combo.setItemData(
+                self._tag_combo.count() - 1, f'#{t}',
+                Qt.ItemDataRole.ToolTipRole)
         self._tag_combo.blockSignals(False)
 
     def _on_text(self, _text: str):
