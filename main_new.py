@@ -175,11 +175,17 @@ class FileStore:
         self.save()
 
     # ── 阅读位置（按字符偏移记忆，不受字号/行距影响）──────────
-    def get_read_pos(self, filepath: str) -> int:
-        return self.data.get('read_positions', {}).get(filepath, 0)
+    def get_read_pos(self, filepath: str) -> dict:
+        """返回 {'char': int, 'poff': int}，兼容旧格式 int"""
+        raw = self.data.get('read_positions', {}).get(filepath, 0)
+        if isinstance(raw, dict):
+            return raw
+        return {'char': int(raw), 'poff': 0}
 
-    def set_read_pos(self, filepath: str, char_pos: int):
-        self.data.setdefault('read_positions', {})[filepath] = char_pos
+    def set_read_pos(self, filepath: str, char: int, poff: int):
+        """poff = 字符顶边在视口内的像素 y（负值表示字符顶部在视口上方）"""
+        self.data.setdefault('read_positions', {})[filepath] = {
+            'char': char, 'poff': poff}
         self.save()
 
     # ── 标注 ──────────────────────────────────────────────────
@@ -892,52 +898,61 @@ class TxtEditor(QTextEdit):
         doc.setUndoRedoEnabled(True)
 
     def load_file(self, path: str):
-        # 保存当前文件的阅读位置（按字符偏移，不受字号/行距影响）
+        # ── 保存当前文件阅读位置 ─────────────────────────────────────
+        # 存：字符偏移 + 该字符顶边在视口内的像素 y（pixel_offset）
+        # pixel_offset 捕获子行级精度（字符可能部分在视口上方）
         if self._fp:
-            char_pos = self.cursorForPosition(QPoint(2, 2)).position()
-            self.store.set_read_pos(self._fp, char_pos)
+            cur  = self.cursorForPosition(QPoint(2, 2))
+            poff = self.cursorRect(cur).top()   # 负值 = 字符顶部在视口上方
+            self.store.set_read_pos(self._fp, char=cur.position(), poff=poff)
 
         self._fp      = path
         self._loading = True
         self._highlighter.set_file(path, rehighlight=False)
         text = Path(path).read_text('utf-8')
 
-        # ── 关键：屏蔽视口绘制，直到位置恢复完成 ──────────────────
-        # setPlainText 会把 scrollbar 重置为 0，用户会看到文档顶部一闪。
-        # 解决方案：在整个加载+恢复流程中禁用 viewport 绘制，
-        # 位置还原后开启，用户看到的第一帧就是正确位置。
-        self.viewport().setUpdatesEnabled(False)
-
+        # ── 屏蔽绘制，避免用户看到文档头部闪烁 ──────────────────────
+        self.setUpdatesEnabled(False)
         self.document().setUndoRedoEnabled(False)
         self.setPlainText(text)
         self._apply_line_spacing()
         self.document().setUndoRedoEnabled(True)
         self._loading = False
         self._update_count()
-        self._apply_reading_width()   # 同步调用，让布局立即生效
 
-        saved_char = self.store.get_read_pos(path)
+        pos = self.store.get_read_pos(path)   # {'char': int, 'poff': int}
 
         def _restore_and_show():
-            cur = QTextCursor(self.document())
+            saved_char = pos['char']
+            saved_poff = pos['poff']   # 保存时字符顶边的视口 y
+
+            cur     = QTextCursor(self.document())
             max_pos = max(0, self.document().characterCount() - 1)
             cur.setPosition(min(saved_char, max_pos))
             self.setTextCursor(cur)
-            self.ensureCursorVisible()
-            # 让保存的字符贴着视口顶端
+            self.ensureCursorVisible()   # 让光标进入视口（触发布局）
+
+            # 精确调整：把字符还原到保存时的像素 y 位置
+            # cr.top() = 恢复后字符顶边的视口 y
+            # 目标：使 cr.top() == saved_poff
             cr = self.cursorRect(cur)
-            if cr.top() > 0:
+            delta = cr.top() - saved_poff
+            if delta != 0:
                 sb = self.verticalScrollBar()
-                sb.setValue(sb.value() + cr.top())
-            # 解锁绘制：第一帧直接画在正确位置，用户零感知
-            self.viewport().setUpdatesEnabled(True)
-            self.viewport().update()
+                sb.setValue(sb.value() + delta)
+
+            # 解锁绘制——第一帧直接在正确位置
+            self.setUpdatesEnabled(True)
+            self.update()
             mw = self.window()
             if hasattr(mw, '_update_progress'):
                 mw._update_progress()
 
-        # singleShot(0)：等本轮事件循环中 setStyleSheet/布局事件全部处理完后执行
-        QTimer.singleShot(0, _restore_and_show)
+        def _after_layout():
+            self._apply_reading_width()
+            QTimer.singleShot(0, _restore_and_show)
+
+        QTimer.singleShot(0, _after_layout)
 
 
     def _apply_annotations(self):
@@ -3874,12 +3889,11 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._txt_editor.save()
-        # 按字符偏移保存阅读位置
         if self._fp:
-            ed = self._txt_editor
-            top_left = ed.viewport().rect().topLeft()
-            char_pos = ed.cursorForPosition(top_left).position()
-            self.store.set_read_pos(self._fp, char_pos)
+            ed   = self._txt_editor
+            cur  = ed.cursorForPosition(QPoint(2, 2))
+            poff = ed.cursorRect(cur).top()
+            self.store.set_read_pos(self._fp, char=cur.position(), poff=poff)
         super().closeEvent(event)
 
 
