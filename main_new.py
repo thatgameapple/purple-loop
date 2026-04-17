@@ -2718,7 +2718,12 @@ class MainWindow(QMainWindow):
         self._txt_editor = TxtEditor(self.store)
         self._txt_editor.mouse_released.connect(self._on_mouse_released)
         self._txt_editor._save_timer.timeout.connect(self._refresh_sidebar)
-        self._empty_lbl = QLabel('purple loop\n祝你引流无量')
+        import random
+        _mottos = [
+            'purple loop\n祝你引流无量',
+            '把逐字稿读透\n才能剪出真正好的内容',
+        ]
+        self._empty_lbl = QLabel(random.choice(_mottos))
         self._empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_lbl.setStyleSheet(f"""
             color: #2e2f33;
