@@ -278,10 +278,22 @@ class TagScanner:
 # ── 标注浮动工具条 ────────────────────────────────────────────────────────
 
 class AnnotBar(QFrame):
-    """选中文字后弹出的浮动工具条"""
+    """
+    选中文字后弹出的浮动工具条。
+    设计：# 按钮打开颜色+备注弹窗（合并原来的4色圆点），B/U/✕ 保留。
+    工具条：  #  B  U  |  ✕
+    """
     annotate        = pyqtSignal(str)
-    label_requested = pyqtSignal()   # 请求输入标签名
+    label_requested = pyqtSignal()   # 请求输入颜色+标签名（# 按钮触发）
     remove          = pyqtSignal()
+
+    _BTN_SS = f"""
+        QPushButton {{
+            background: {C['bg_sel']}; color: {C['fg']};
+            border-radius: 4px; border: none; font-size: 13px;
+        }}
+        QPushButton:hover {{ background: {C['accent']}; color: white; }}
+    """
 
     def __init__(self):
         super().__init__(None, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
@@ -295,74 +307,58 @@ class AnnotBar(QFrame):
         """)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(8, 6, 8, 6)
-        lay.setSpacing(6)
+        lay.setSpacing(4)
 
-        _types = [
-            ('hl_yellow', '#e8c870', ''),
-            ('hl_green',  '#5ec87a', ''),
-            ('hl_pink',   '#e86090', ''),
-            ('hl_purple', '#a878f0', ''),
-            ('bold',      None,      'B'),
-            ('underline', None,      'U'),
-        ]
+        def _btn(text, tooltip, slot, extra_ss=''):
+            b = QPushButton(text)
+            b.setFixedSize(30, 28)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setToolTip(tooltip)
+            b.setStyleSheet(self._BTN_SS + extra_ss)
+            b.clicked.connect(slot)
+            return b
 
-        for atype, color, label in _types:
-            btn = QPushButton()
-            btn.setFixedSize(26, 26)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setToolTip(ANNOT_LABEL.get(atype, atype))
-            if color:
-                btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background: {color}; border-radius: 13px; border: none;
-                    }}
-                    QPushButton:hover {{ border: 2px solid white; }}
-                """)
-            else:
-                f = QFont('PingFang SC', 12)
-                f.setBold(atype == 'bold')
-                f.setUnderline(atype == 'underline')
-                btn.setFont(f)
-                btn.setText(label)
-                btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background: {C['bg_sel']}; color: {C['fg']};
-                        border-radius: 4px; border: none;
-                    }}
-                    QPushButton:hover {{ background: {C['accent']}; color: white; }}
-                """)
-            btn.clicked.connect(lambda _, t=atype: self.annotate.emit(t))
-            lay.addWidget(btn)
+        # # 按钮：打开颜色+备注弹窗
+        hash_btn = _btn('#', '高亮 / 备注（选颜色）', self.label_requested.emit,
+                        f'QPushButton {{ color: {C["accent"]}; font-weight: bold; font-size: 15px; }}'
+                        f'QPushButton:hover {{ background: {C["accent"]}; color: white; }}')
+        lay.addWidget(hash_btn)
 
-        # ── 文字标签按钮 ──────────────────────────
-        sep_lbl = QFrame()
-        sep_lbl.setFrameShape(QFrame.Shape.VLine)
-        sep_lbl.setStyleSheet(f"color: {C['border']};")
-        lay.addWidget(sep_lbl)
+        # B / U
+        b_btn = QPushButton('B')
+        b_btn.setFixedSize(30, 28)
+        b_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        b_btn.setToolTip('加粗')
+        f_b = QFont('PingFang SC', 13)
+        f_b.setBold(True)
+        b_btn.setFont(f_b)
+        b_btn.setStyleSheet(self._BTN_SS)
+        b_btn.clicked.connect(lambda: self.annotate.emit('bold'))
+        lay.addWidget(b_btn)
 
-        lbl_btn = QPushButton('#')
-        lbl_btn.setFixedSize(26, 26)
-        lbl_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        lbl_btn.setToolTip('文字标签')
-        lbl_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {C['bg_sel']}; color: {C['accent']};
-                border-radius: 4px; border: none; font-size: 14px; font-weight: bold;
-            }}
-            QPushButton:hover {{ background: {C['accent']}; color: white; }}
-        """)
-        lbl_btn.clicked.connect(self.label_requested.emit)
-        lay.addWidget(lbl_btn)
+        u_btn = QPushButton('U')
+        u_btn.setFixedSize(30, 28)
+        u_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        u_btn.setToolTip('下划线')
+        f_u = QFont('PingFang SC', 13)
+        f_u.setUnderline(True)
+        u_btn.setFont(f_u)
+        u_btn.setStyleSheet(self._BTN_SS)
+        u_btn.clicked.connect(lambda: self.annotate.emit('underline'))
+        lay.addWidget(u_btn)
 
-        # ── 删除按钮 ──────────────────────────────
+        # 分隔
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.VLine)
         sep.setStyleSheet(f"color: {C['border']};")
+        sep.setFixedWidth(1)
         lay.addWidget(sep)
 
+        # ✕ 删除
         del_btn = QPushButton('✕')
-        del_btn.setFixedSize(26, 26)
+        del_btn.setFixedSize(28, 28)
         del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        del_btn.setToolTip('删除标注')
         del_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent; color: {C['fg_dim']}; border: none; font-size: 12px;
@@ -3766,6 +3762,7 @@ class MainWindow(QMainWindow):
             return
         self.store.remove_annotation(self._fp, annot_id)
         self._txt_editor._apply_annotations()
+        self._annot_panel.refresh(self._fp)
 
     def _clear_all_annots(self):
         if not self._fp:
