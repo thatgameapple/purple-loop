@@ -894,8 +894,8 @@ class TxtEditor(QTextEdit):
     def load_file(self, path: str):
         # 保存当前文件的阅读位置（按字符偏移，不受字号/行距影响）
         if self._fp:
-            top_left = self.viewport().rect().topLeft()
-            char_pos = self.cursorForPosition(top_left).position()
+            # QPoint(2,2) 避开边框像素，更准确地取视口顶部可见字符
+            char_pos = self.cursorForPosition(QPoint(2, 2)).position()
             self.store.set_read_pos(self._fp, char_pos)
 
         self._fp      = path
@@ -911,7 +911,7 @@ class TxtEditor(QTextEdit):
         self._update_count()         # 加载完成后更新一次字数
         QTimer.singleShot(0, self._apply_reading_width)   # 等布局稳定后重算行宽
 
-        # 恢复阅读位置（延迟到布局完成后，按字符偏移定位）
+        # 恢复阅读位置（延迟到行宽重算稳定后，按字符偏移定位）
         saved_char = self.store.get_read_pos(path)
         def _restore():
             cur = QTextCursor(self.document())
@@ -919,10 +919,16 @@ class TxtEditor(QTextEdit):
             cur.setPosition(min(saved_char, max_pos))
             self.setTextCursor(cur)
             self.ensureCursorVisible()
+            # ensureCursorVisible 只保证光标在视口内，不保证在顶部。
+            # 额外调整 scrollbar，让保存的字符出现在视口顶端。
+            cr = self.cursorRect(cur)
+            if cr.top() > 0:
+                sb = self.verticalScrollBar()
+                sb.setValue(sb.value() + cr.top())
             mw = self.window()
             if hasattr(mw, '_update_progress'):
                 mw._update_progress()
-        QTimer.singleShot(50, _restore)
+        QTimer.singleShot(120, _restore)   # 120ms：等 _apply_reading_width 布局稳定
 
 
     def _apply_annotations(self):
