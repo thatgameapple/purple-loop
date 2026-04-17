@@ -510,7 +510,7 @@ class AnnotPanel(QWidget):
                 shown = [a for a in all_annots
                          if a['type'] in ('hl_purple', 'label')]
             elif self._filter == 'note':
-                shown = [a for a in all_annots if a['type'] == 'note']
+                shown = [a for a in all_annots if a.get('note', '').strip()]
             else:
                 shown = [a for a in all_annots if a['type'] == self._filter]
         else:
@@ -934,7 +934,7 @@ class TxtEditor(QTextEdit):
         text  = cur.selectedText().replace('\u2029', '\n')
         extra = {'label_text': label_text} if label_text else {}
         annot = self.store.add_annotation(self._fp, atype, start, end, text, **extra)
-        self._highlighter.rehighlight()
+        self._apply_annotations()   # 更新 _annots 缓存后再重绘
         return annot
 
     def remove_at_cursor(self):
