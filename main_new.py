@@ -1147,7 +1147,7 @@ class TxtEditor(QTextEdit):
 _MENU_ICON_CHARS = {
     'pin':    '\u2605',   # ★  实心五角星 → 置顶
     'pencil': '\u270e',   # ✎  铅笔
-    'trash':  '\u2672',   # ♲  回收符号（垃圾桶语义，在 Apple Symbols 里有干净字形）
+    'trash':  '\U0001F43E', # 🐾  猫爪
 }
 
 def _mk_menu_icon(shape: str, color: str = '#9a9a9a', lsize: int = 14) -> QIcon:
