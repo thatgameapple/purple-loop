@@ -880,12 +880,15 @@ class TxtEditor(QTextEdit):
 
     def _apply_line_spacing(self):
         from PyQt6.QtGui import QTextBlockFormat
-        cur = QTextCursor(self.document())
+        doc = self.document()
+        doc.setUndoRedoEnabled(False)      # 跳过 undo stack，大幅加速批量操作
+        cur = QTextCursor(doc)
         cur.select(QTextCursor.SelectionType.Document)
         blk_fmt = QTextBlockFormat()
         blk_fmt.setLineHeight(165, 1)       # 1.65 倍行距
         blk_fmt.setBottomMargin(8)          # 段落间距 0.5em（有层次但不散）
         cur.setBlockFormat(blk_fmt)
+        doc.setUndoRedoEnabled(True)
 
     def load_file(self, path: str):
         # 保存当前文件的阅读位置
@@ -897,10 +900,13 @@ class TxtEditor(QTextEdit):
         # 先更新高亮器状态（不触发 rehighlight），让 setPlainText 后的自动高亮直接用正确数据
         self._highlighter.set_file(path, rehighlight=False)
         text = Path(path).read_text('utf-8')
+        self.document().setUndoRedoEnabled(False)
         self.setPlainText(text)
         self._apply_line_spacing()   # setPlainText 会重置 block format
+        self.document().setUndoRedoEnabled(True)
         self._loading = False
         self._update_count()         # 加载完成后更新一次字数
+        QTimer.singleShot(0, self._apply_reading_width)   # 等布局稳定后重算行宽
 
         # 恢复阅读位置（延迟到布局完成后）
         saved_pos = self.store.get_read_pos(path)
@@ -1016,9 +1022,9 @@ class TxtEditor(QTextEdit):
 
     def _apply_reading_width(self):
         """动态计算左右 padding，使内容区不超过 700px（约 35 个汉字）"""
-        vw = self.viewport().width()
+        w = self.width()               # 用外层 widget 宽度，滚动条出现不影响此值
         max_content = 700
-        h_pad = max(60, (vw - max_content) // 2)
+        h_pad = max(60, (w - max_content) // 2)
         self.setStyleSheet(f"""
             QTextEdit {{
                 background: {C['bg']}; color: {C['fg']};
