@@ -798,8 +798,7 @@ class TxtEditor(QTextEdit):
         self._loading    = False
         self._highlighter = DocHighlighter(self.document(), store)
 
-        # 字体
-        self._font_size  = 18
+        # 字体（固定最优阅读字号，不开放调节）
         self._set_font()
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setLineWrapMode(QTextEdit.LineWrapMode.FixedPixelWidth)
@@ -863,21 +862,12 @@ class TxtEditor(QTextEdit):
         self._wc_timer.start()
 
     def _set_font(self):
-        if not hasattr(self, '_font_size'):
-            self._font_size = 18
-        f = QFont('LXGW WenKai', self._font_size)
+        f = QFont('LXGW WenKai', 19)   # 固定最优阅读字号
         if not f.exactMatch():
-            f = QFont('PingFang SC', self._font_size)
+            f = QFont('PingFang SC', 19)
         f.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
         self.setFont(f)
         self._apply_line_spacing()
-
-    def adjust_font_size(self, delta: int):
-        """调整字号，delta=+1 放大，delta=-1 缩小"""
-        self._font_size = max(12, min(28, self._font_size + delta))
-        self._set_font()
-        if self._fp:
-            self._apply_line_spacing()
 
     def _apply_line_spacing(self):
         from PyQt6.QtGui import QTextBlockFormat
@@ -886,8 +876,8 @@ class TxtEditor(QTextEdit):
         cur = QTextCursor(doc)
         cur.select(QTextCursor.SelectionType.Document)
         blk_fmt = QTextBlockFormat()
-        blk_fmt.setLineHeight(165, 1)       # 1.65 倍行距
-        blk_fmt.setBottomMargin(8)          # 段落间距 0.5em（有层次但不散）
+        blk_fmt.setLineHeight(175, 1)       # 1.75 倍行距（中文阅读最优）
+        blk_fmt.setBottomMargin(10)         # 段落间距
         cur.setBlockFormat(blk_fmt)
         doc.setUndoRedoEnabled(True)
 
@@ -1024,9 +1014,8 @@ class TxtEditor(QTextEdit):
     def _apply_reading_width(self):
         """FixedPixelWidth 硬限行宽，左侧 padding 居中，右侧 8px 使滚动条贴边"""
         w = self.width()
-        max_content = 700
+        max_content = 680   # 约 35 个汉字，中文阅读黄金行宽
         right_pad, scrollbar_w = 8, 6
-        # 行宽：窗口够宽则固定 700，否则缩小以适配
         wrap_w = min(max_content, max(200, w - 2 * 60 - right_pad - scrollbar_w))
         self.setLineWrapColumnOrWidth(wrap_w)
         # 左侧 padding 让内容居中（两侧视觉空白对称）
@@ -3299,16 +3288,6 @@ class MainWindow(QMainWindow):
                 self._close_search()
             elif self._note_bar.isVisible():
                 self._note_bar.hide()
-        # 字号调节：Ctrl+= 放大，Ctrl+- 缩小
-        elif event.modifiers() & MOD:
-            if event.key() in (Qt.Key.Key_Equal, Qt.Key.Key_Plus):
-                self._txt_editor.adjust_font_size(+1)
-                self.statusBar().showMessage(f'字号 {self._txt_editor._font_size}px', 1500)
-                return
-            elif event.key() == Qt.Key.Key_Minus:
-                self._txt_editor.adjust_font_size(-1)
-                self.statusBar().showMessage(f'字号 {self._txt_editor._font_size}px', 1500)
-                return
         super().keyPressEvent(event)
 
     # ── 拖放文件 ──────────────────────────────────────────────
