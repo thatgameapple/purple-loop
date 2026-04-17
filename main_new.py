@@ -3699,21 +3699,23 @@ class MainWindow(QMainWindow):
             self._annot_bar.hide()
             return
         # ── 工具条定位：贴选区下方，不遮文字 ─────────────────────────
-        # 业界做法（Kindle/Google Docs/Apple Notes）：
-        # 把光标移到选区末尾的「下一行」，取其 top y ——
-        # 这天然包含行间距，精准落在选区和下一行之间的空白里。
-        ed   = self._txt_editor
-        end  = max(cur.position(), cur.anchor())
-        tmp  = QTextCursor(ed.document())
-        tmp.setPosition(end)
+        # 关键：selectionEnd 光标落在"最后选中字符的下一位"。
+        # 若选区末尾恰好在视觉行尾，该位置会跳到下一行行首，
+        # 导致 cursorRect 给出下一行坐标，工具条偏低甚至错位。
+        # 修正：退一格定位到最后一个真正选中的字符，取其行底部。
+        ed    = self._txt_editor
+        end   = max(cur.position(), cur.anchor())
+        start = min(cur.position(), cur.anchor())
 
-        # cursorRect.bottom() 是该行字符框底部；行间距在其下方
-        # 用字体行高估算行间距，确保工具条落在选区高亮和下一行文字之间
-        end_rect  = ed.cursorRect(tmp)
-        line_h    = end_rect.height()                  # Qt 返回的行高（含行间距）
-        base_y    = ed.mapToGlobal(end_rect.bottomLeft()).y() + max(4, line_h // 4)
+        # 定位到最后一个选中字符（end-1），而非 end 处
+        last_char = QTextCursor(ed.document())
+        last_char.setPosition(max(start, end - 1))
+        end_rect = ed.cursorRect(last_char)
 
-        # x：以选区末尾为中心，左移半个工具条宽
+        # bottom() + 行高的 1/3 作为间距（行高已含行间距）
+        line_h = end_rect.height()
+        base_y = ed.mapToGlobal(end_rect.bottomLeft()).y() + max(6, line_h // 3)
+
         sh = self._annot_bar.sizeHint()
         x  = ed.mapToGlobal(end_rect.bottomLeft()).x() - sh.width() // 2
         y  = base_y
