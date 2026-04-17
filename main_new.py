@@ -3229,21 +3229,28 @@ class MainWindow(QMainWindow):
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
             exts = {Path(u.toLocalFile()).suffix.lower() for u in urls}
-            if exts & {'.txt'}:
+            if exts & {'.txt', '.pdf', '.docx', '.srt'}:
                 event.acceptProposedAction()
                 return
         event.ignore()
 
     def dropEvent(self, event):
+        from converter import convert_to_txt, SUPPORTED_EXTS
         for url in event.mimeData().urls():
             fp  = url.toLocalFile()
             ext = Path(fp).suffix.lower()
             try:
-                if ext == '.txt':
+                if ext in SUPPORTED_EXTS:
+                    self.statusBar().showMessage(f'正在转换 {Path(fp).name} …', 0)
+                    QApplication.processEvents()
+                    fp = convert_to_txt(fp)
+                if ext in {'.txt'} | SUPPORTED_EXTS:
                     self.store.add_txt(fp)
                     self._open_file(fp)
+                    self.statusBar().showMessage(
+                        f'已转换并打开：{Path(fp).name}', 3000)
             except Exception as e:
-                self.statusBar().showMessage(f'无法打开：{e}', 3000)
+                self.statusBar().showMessage(f'转换失败：{e}', 5000)
         self._refresh_sidebar()
         event.acceptProposedAction()
 
