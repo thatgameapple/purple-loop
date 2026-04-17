@@ -3698,18 +3698,26 @@ class MainWindow(QMainWindow):
             # 短选区：只是阅读定位，不弹工具条
             self._annot_bar.hide()
             return
-        # 定位到选区起点上方
-        start = min(cur.position(), cur.anchor())
+        # 定位到选区末尾正下方（贴近被选文字，更直观）
+        end = max(cur.position(), cur.anchor())
         tmp = QTextCursor(self._txt_editor.document())
-        tmp.setPosition(start)
+        tmp.setPosition(end)
         rect = self._txt_editor.cursorRect(tmp)
-        gp   = self._txt_editor.mapToGlobal(rect.topLeft())
+        gp   = self._txt_editor.mapToGlobal(rect.bottomLeft())
         sh   = self._annot_bar.sizeHint()
         x    = gp.x() - sh.width() // 2
-        y    = gp.y() - sh.height() - 12
+        y    = gp.y() + 8
         scr  = QApplication.primaryScreen().geometry()
         x    = max(4, min(x, scr.width()  - sh.width()  - 4))
-        y    = max(4, min(y, scr.height() - sh.height() - 4))
+        # 如果下方空间不足，改到选区上方
+        if y + sh.height() + 4 > scr.height():
+            start = min(cur.position(), cur.anchor())
+            tmp2  = QTextCursor(self._txt_editor.document())
+            tmp2.setPosition(start)
+            rect2 = self._txt_editor.cursorRect(tmp2)
+            gp2   = self._txt_editor.mapToGlobal(rect2.topLeft())
+            y     = gp2.y() - sh.height() - 8
+        y = max(4, y)
         self._annot_bar.move(x, y)
         self._annot_bar.show()
         # 记录光标处已有的标注（供 ✕ 删除用）
