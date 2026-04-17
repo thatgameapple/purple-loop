@@ -3261,34 +3261,33 @@ class MainWindow(QMainWindow):
         if not kw or self._stack.currentWidget() != self._txt_editor:
             self._search_bar.set_count(0)
             return
-        doc  = self._txt_editor.document()
-        full = doc.toPlainText()
-        needle   = kw if case_sensitive else kw.lower()
-        haystack = full if case_sensitive else full.lower()
+        from PyQt6.QtGui import QTextDocument as _QTD
+        doc = self._txt_editor.document()
+
+        flags = _QTD.FindFlag(0)
+        if case_sensitive:
+            flags |= _QTD.FindFlag.FindCaseSensitively
 
         fmt_all = QTextCharFormat()
         fmt_all.setBackground(QColor('#2a2400'))
         fmt_all.setForeground(QColor('#c8a850'))
 
-        self._search_matches = []
+        # 用 Qt 自带 find()，cursor 位置天然正确，无需手动转换
+        self._search_matches = []   # 存 QTextCursor
         selections = []
-        start = 0
-        while True:
-            idx = haystack.find(needle, start)
-            if idx < 0:
-                break
-            self._search_matches.append(idx)
+        c = doc.find(kw, 0, flags)
+        while not c.isNull():
+            self._search_matches.append(QTextCursor(c))
             sel = QTextEdit.ExtraSelection()
-            c = QTextCursor(doc)
-            c.setPosition(idx)
-            c.setPosition(idx + len(kw), QTextCursor.MoveMode.KeepAnchor)
-            sel.cursor = c
+            sel.cursor = QTextCursor(c)
             sel.format = fmt_all
             selections.append(sel)
-            start = idx + 1
+            c = doc.find(kw, c, flags)
 
         self._txt_editor.setExtraSelections(selections)
-        self._search_bar.set_matches(self._search_matches, len(full))
+        self._search_bar.set_matches(
+            [m.selectionStart() for m in self._search_matches],
+            doc.characterCount())
         if self._search_matches:
             self._jump_to_match(0)
 
@@ -3296,10 +3295,7 @@ class MainWindow(QMainWindow):
         if not self._search_matches or idx >= len(self._search_matches):
             return
         doc = self._txt_editor.document()
-        pos = self._search_matches[idx]
-        kw  = self._search_bar.current_keyword()
 
-        # 当前条：更亮
         fmt_cur = QTextCharFormat()
         fmt_cur.setBackground(QColor('#3a2e00'))
         fmt_cur.setForeground(QColor('#f0d070'))
@@ -3310,26 +3306,22 @@ class MainWindow(QMainWindow):
         fmt_all.setForeground(QColor('#c8a850'))
 
         sels = []
-        for i, p in enumerate(self._search_matches):
+        for i, mc in enumerate(self._search_matches):
             sel = QTextEdit.ExtraSelection()
-            c = QTextCursor(doc)
-            c.setPosition(p)
-            c.setPosition(p + len(kw), QTextCursor.MoveMode.KeepAnchor)
-            sel.cursor = c
+            sel.cursor = QTextCursor(mc)
             sel.format = fmt_cur if i == idx else fmt_all
             sels.append(sel)
         self._txt_editor.setExtraSelections(sels)
 
-        # 更新面板计数
         self._search_bar._cur_idx = idx
         self._search_bar._update_count()
 
-        # 居中滚动
-        c = QTextCursor(doc)
-        c.setPosition(pos)
-        self._txt_editor.setTextCursor(c)
+        # 居中滚动到当前命中
+        cur = QTextCursor(self._search_matches[idx])
+        cur.setPosition(cur.selectionStart())
+        self._txt_editor.setTextCursor(cur)
         self._txt_editor.ensureCursorVisible()
-        rect = self._txt_editor.cursorRect(c)
+        rect = self._txt_editor.cursorRect(cur)
         vp_h = self._txt_editor.viewport().height()
         sb   = self._txt_editor.verticalScrollBar()
         sb.setValue(sb.value() + rect.center().y() - vp_h // 2)
