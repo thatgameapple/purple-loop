@@ -1543,6 +1543,16 @@ class SearchPanel(QFrame):
         self._input.setFocus()
         self._input.selectAll()
 
+    def clear_search(self):
+        """切换文件时调用：清空关键词 + 重置计数"""
+        self._input.blockSignals(True)
+        self._input.clear()
+        self._input.blockSignals(False)
+        self._matches = []
+        self._cur_idx = -1
+        self._count_lbl.setText('')
+        self.set_count(0)
+
     def is_case_sensitive(self) -> bool:
         return self._case_btn.isChecked()
 
@@ -1958,8 +1968,16 @@ class GlobalSearchDialog(QDialog):
             hdr.mousePressEvent = _hdr_click
             self._list_vlay.insertWidget(self._list_vlay.count()-1, hdr)
 
-            # 每条命中
+            # 每条命中（每文件最多渲染 50 条，避免大文件卡顿）
+            _MAX_PER_FILE = 50
             for i, (pos, mlen) in enumerate(hits):
+                if i >= _MAX_PER_FILE:
+                    rest = len(hits) - _MAX_PER_FILE
+                    more_lbl = QLabel(f'  …还有 {rest} 条，请缩小搜索范围')
+                    more_lbl.setStyleSheet(
+                        f'color: {C["fg_dim"]}; font-size: 12px; padding: 4px 12px;')
+                    self._list_vlay.insertWidget(self._list_vlay.count()-1, more_lbl)
+                    break
                 global_i = flat_offset + i
                 row = self._make_hit_row(full, pos, mlen, global_i, kw, case_sensitive)
                 self._list_vlay.insertWidget(self._list_vlay.count()-1, row)
@@ -2494,6 +2512,175 @@ class HelpDialog(QDialog):
         root.addLayout(btn_row)
 
 
+# ── 个人口头禅自动发现算法（基于改造版 TF-IDF + 中文口语参考语料）────────
+
+# 通用中文口语参考词频（每千汉字出现次数，基于 BCC 口语子库估算）
+# 数值越大 = 越通用，该词对个人分析价值越低
+_SPOKEN_REF: dict = {
+    # 极高频通用词（人人都说，个人价值 ≈ 0）
+    '这个': 18.0, '就是': 14.0, '那个':  9.0, '一个': 12.0, '什么': 12.0,
+    '我们':  9.0, '没有':  8.0, '这是':  6.0, '那是':  4.0, '不是':  7.0,
+    '可以':  6.0, '知道':  5.0, '所以':  5.0, '因为':  4.5, '但是':  4.5,
+    '然后':  5.5, '觉得':  4.5, '他们':  5.0, '你们':  3.0, '感觉':  3.5,
+    '应该':  3.0, '已经':  4.0, '如果':  3.0, '虽然':  2.0, '还是':  4.0,
+    '或者':  2.0, '而且':  3.0, '非常':  3.0, '很多':  4.0, '真的':  4.5,
+    '其实':  4.0, '只是':  2.5, '一些':  3.0, '一样':  3.0, '这样':  4.0,
+    '那样':  2.0, '这种':  3.0, '那种':  2.0, '最后':  3.0, '之后':  3.0,
+    '之前':  2.0, '开始':  3.0, '发现':  2.0, '认为':  2.0, '希望':  2.0,
+    '需要':  2.5, '问题':  4.0, '情况':  2.0, '关系':  2.0, '时候':  5.5,
+    '地方':  2.5, '事情':  2.5, '工作':  2.5, '生活':  2.5, '自己':  4.0,
+    '比如':  2.5, '那么':  3.0, '这么':  3.0, '怎么':  3.5, '好像':  2.5,
+    '不过':  2.0, '比较':  2.0, '大家':  3.0, '所有':  2.0, '真正':  1.5,
+    '一种':  2.0, '每个':  1.5, '对于':  2.0, '关于':  1.5, '里面':  2.5,
+    '个人':  2.0, '还有':  4.5, '我想':  2.0, '的话':  2.5, '是的':  2.0,
+    '有人':  1.5, '任何':  1.0, '来说':  2.5, '就好':  1.5, '能够':  1.5,
+    # 3字通用短语
+    '的时候':  5.5, '就是说':  2.0, '我觉得':  1.5, '比如说':  1.2,
+    '也就是':  0.9, '不知道':  2.5, '不一定':  1.0, '不一样':  1.0,
+    '你知道':  1.0, '所以说':  1.0, '是一个':  1.5, '有一个':  1.5,
+    '但是我':  0.8, '然后我':  0.8, '其实我':  0.6, '因为我':  0.6,
+    '所以我':  0.7, '一定要':  0.8, '可以的':  0.6, '没有的':  0.4,
+    # 4字通用短语
+    '也就是说':  0.7, '就是这样':  0.3, '总的来说':  0.4, '简单来说': 0.2,
+}
+
+# 未知 n-gram 的默认参考频率（长度越长越稀有）
+_REF_DEFAULT = {2: 2.0, 3: 0.15, 4: 0.025, 5: 0.006}
+
+
+def discover_verbal_tics(files: list, all_files: list | None = None,
+                         top_n: int = 30) -> list:
+    """
+    从逐字稿文件中自动发现说话人的个人口头禅。
+
+    核心算法：双层 TF-IDF
+    ─────────────────────────────────────────────
+    第一层：BCC 基准（过滤通用中文高频词，如"这个"、"就是"）
+    第二层：全库基准（过滤话题词，如"知行合一"在阳明专题里高频但不是口头禅）
+
+    scoring = BCC_excess × topic_distribution × cross_file_conf × √len
+      BCC_excess        = 全库词频 / 通用中文基准词频（过滤通用词）
+      topic_distribution = 全库词频 / 所选文件词频（过滤话题词；越接近1越像口头禅）
+      cross_file_conf   = 出现文件比例（跨文件一致性）
+    """
+    import math
+    _CHINESE = re.compile(r'[^\u4e00-\u9fff]')
+    _CLAUSE_SEP = re.compile(r'[，。！？、；：\n""''【】（）\[\]…—~～]')
+
+    def _scan_files(fps: list) -> tuple:
+        """返回 (file_grams_list, total_dict, file_cnt_dict, total_chars)"""
+        fgs, tot, fcnt, tchars = [], {}, {}, 0
+        for fp in fps:
+            try:
+                raw = Path(fp).read_text('utf-8', errors='ignore')
+            except Exception:
+                continue
+            local: dict = {}
+            for clause in _CLAUSE_SEP.split(raw):
+                chars = _CHINESE.sub('', clause)
+                tchars += len(chars)
+                if len(chars) < 2:
+                    continue
+                for n in range(2, 6):
+                    for i in range(len(chars) - n + 1):
+                        g = chars[i:i+n]
+                        local[g] = local.get(g, 0) + 1
+            fgs.append(local)
+            for g, c in local.items():
+                tot[g] = tot.get(g, 0) + c
+                fcnt[g] = fcnt.get(g, 0) + 1
+        return fgs, tot, fcnt, tchars
+
+    # 扫描所选文件（TF）
+    sel_grams, sel_total, sel_fcnt, sel_chars = _scan_files(files)
+    if not sel_grams or sel_chars == 0:
+        return []
+    n_files = len(sel_grams)
+
+    # 扫描全库文件（全局基准，过滤话题词）
+    _all = list(dict.fromkeys((all_files or []) + files))  # 去重，确保包含所选
+    _, all_total, _, all_chars = _scan_files(_all) if _all != files else (None, sel_total, None, sel_chars)
+    all_is_same = (set(_all) == set(files))   # 所选文件 = 全库时无法区分话题词
+
+    # 自适应最低绝对频次
+    min_count = max(3, sel_chars // 3000)
+
+    # 候选筛选：BCC 超额比值 > 1.5（过滤通用词）
+    candidates: dict = {}
+    for g, c in sel_total.items():
+        if c < min_count:
+            continue
+        bcc_ref  = _SPOKEN_REF.get(g, _REF_DEFAULT.get(len(g), 0.006))
+        sel_rate = c / sel_chars * 1000
+        bcc_excess = sel_rate / bcc_ref
+        if bcc_excess < 1.5:
+            continue
+
+        # 话题浓度惩罚：该词在所选文件的频率 vs 全库频率
+        # topic_dist ∈ (0,1]：越接近 1 = 越均匀分布 = 越像口头禅
+        if not all_is_same and all_chars > 0:
+            all_c    = all_total.get(g, c)
+            all_rate = all_c / all_chars * 1000
+            # 话题浓度 = sel_rate / all_rate，>1 表示该词集中于所选话题
+            topic_conc   = sel_rate / max(all_rate, 0.001)
+            topic_dist   = 1.0 / max(topic_conc, 1.0) ** 0.6  # 浓度越高惩罚越重
+            global_excess = all_rate / bcc_ref   # 基于全库的超额（更准确）
+        else:
+            topic_dist    = 1.0
+            global_excess = bcc_excess
+
+        candidates[g] = (c, global_excess, topic_dist)
+
+    if not candidates:
+        return []
+
+    # 去重 ①：子串抑制
+    by_len = sorted(candidates, key=len, reverse=True)
+    suppressed: set = set()
+    for i, longer in enumerate(by_len):
+        if longer in suppressed:
+            continue
+        c_long = candidates[longer][0]
+        for shorter in by_len[i+1:]:
+            if shorter in suppressed:
+                continue
+            if shorter in longer and c_long >= candidates[shorter][0] * 0.50:
+                suppressed.add(shorter)
+
+    # 去重 ②：同长度滑窗相邻碎片抑制
+    all_cands = [g for g in by_len if g not in suppressed]
+    for i, a in enumerate(all_cands):
+        if a in suppressed:
+            continue
+        for b in all_cands[i+1:]:
+            if b in suppressed or len(b) != len(a):
+                continue
+            if a[1:] == b[:-1] or b[1:] == a[:-1]:
+                ca, ea, _ = candidates[a]
+                cb, eb, _ = candidates[b]
+                if abs(ca - cb) / max(ca, cb) < 0.30:
+                    suppressed.add(a if ea < eb else b)
+
+    # 综合评分
+    results = []
+    for g in by_len:
+        if g in suppressed:
+            continue
+        c, g_excess, t_dist = candidates[g]
+        fc = sel_fcnt[g]
+        file_conf = 0.4 + 0.6 * (fc / n_files)
+        score = g_excess * t_dist * file_conf * math.sqrt(len(g))
+        rate  = c / sel_chars * 1000
+        results.append({
+            'phrase': g, 'count': c, 'file_count': fc,
+            'n_files': n_files, 'rate': rate,
+            'excess': g_excess, 'topic_dist': t_dist, 'score': score,
+        })
+
+    results.sort(key=lambda x: x['score'], reverse=True)
+    return results[:top_n]
+
+
 # ── 口头禅频率分析 ────────────────────────────────────────────────────────
 
 class FillerAnalysisDialog(QDialog):
@@ -2537,7 +2724,7 @@ class FillerAnalysisDialog(QDialog):
     def __init__(self, store: 'FileStore', parent=None):
         super().__init__(parent)
         self.store = store
-        self.setWindowTitle('口头禅频率分析')
+        self.setWindowTitle('个人口头禅发现')
         self.resize(560, 680)
         self.setMinimumSize(420, 400)
         self.setStyleSheet(self._SS)
@@ -2610,18 +2797,7 @@ class FillerAnalysisDialog(QDialog):
         return self._tree.get(tag, [])
 
     def _run(self):
-        from collections import Counter
         files = self._get_files()
-        counter: Counter = Counter()
-        total_files = 0
-        for fp in files:
-            try:
-                text = Path(fp).read_text('utf-8')
-                matches = FILLER_STAT_RE.findall(text)
-                counter.update(matches)
-                total_files += 1
-            except Exception:
-                pass
 
         # 清空旧结果
         while self._result_layout.count() > 1:
@@ -2629,27 +2805,42 @@ class FillerAnalysisDialog(QDialog):
             if item.widget():
                 item.widget().deleteLater()
 
-        if not counter:
-            placeholder = QLabel('未找到语气词')
-            placeholder.setStyleSheet(f'color: {C["fg_dim"]}; font-size: 13px;')
-            placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._result_layout.insertWidget(0, placeholder)
-            self._summary_lbl.setText('')
+        if not files:
+            self._show_empty('没有找到文件')
             return
 
-        ranked = counter.most_common()
-        max_count = ranked[0][1]
+        all_files = self.store.get_txt_files()
+        results = discover_verbal_tics(files, all_files)
 
-        for rank, (word, count) in enumerate(ranked, 1):
-            row = self._make_row(rank, word, count, max_count)
+        if not results:
+            self._show_empty('语料不足，暂未发现高频短语')
+            return
+
+        max_count = results[0]['count']
+        for rank, r in enumerate(results, 1):
+            row = self._make_row(rank, r, max_count)
             self._result_layout.insertWidget(rank - 1, row)
 
-        total_count = sum(counter.values())
+        same_as_all = set(files) == set(all_files)
+        hint = '（建议导入更多不同话题的文件，结果会更准确）' if same_as_all else ''
         self._summary_lbl.setText(
-            f'共分析 {total_files} 个文件，发现 {len(counter)} 种口头禅，合计出现 {total_count} 次'
+            f'分析 {len(files)}/{len(all_files)} 个文件 · 发现 {len(results)} 个高频短语 {hint}'
         )
 
-    def _make_row(self, rank: int, word: str, count: int, max_count: int) -> QWidget:
+    def _show_empty(self, msg: str):
+        lbl = QLabel(msg)
+        lbl.setStyleSheet(f'color: {C["fg_dim"]}; font-size: 13px;')
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._result_layout.insertWidget(0, lbl)
+        self._summary_lbl.setText('')
+
+    def _make_row(self, rank: int, r: dict, max_count: int) -> QWidget:
+        phrase     = r['phrase']
+        count      = r['count']
+        file_count = r['file_count']
+        n_files    = r['n_files']
+        rate       = r['rate']
+
         row = QWidget()
         row.setStyleSheet(f'QWidget {{ background: {C["bg_input"]}; border-radius: 6px; }}')
         h = QHBoxLayout(row)
@@ -2658,50 +2849,54 @@ class FillerAnalysisDialog(QDialog):
 
         # 排名
         rank_lbl = QLabel(f'{rank}')
-        rank_lbl.setFixedWidth(28)
+        rank_lbl.setFixedWidth(24)
         rank_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         rank_lbl.setStyleSheet(f'color: {C["fg_dim"]}; font-size: 11px; background: transparent;')
         h.addWidget(rank_lbl)
 
-        # 词
-        word_lbl = QLabel(word)
-        word_lbl.setFixedWidth(80)
-        word_lbl.setStyleSheet(f'color: {C["fg"]}; font-size: 14px; background: transparent;')
-        h.addWidget(word_lbl)
+        # 短语
+        phrase_lbl = QLabel(phrase)
+        phrase_lbl.setFixedWidth(90)
+        phrase_lbl.setStyleSheet(f'color: {C["fg"]}; font-size: 14px; background: transparent;')
+        h.addWidget(phrase_lbl)
 
         # 进度条
-        bar_container = QWidget()
-        bar_container.setStyleSheet('background: transparent;')
-        bar_h = QHBoxLayout(bar_container)
-        bar_h.setContentsMargins(0, 0, 0, 0)
         bar = QProgressBar()
         bar.setRange(0, max_count)
         bar.setValue(count)
         bar.setTextVisible(False)
-        bar.setFixedHeight(8)
+        bar.setFixedHeight(6)
         ratio = count / max_count if max_count > 0 else 0
-        # 高频 → 深紫，低频 → 暗灰
         bar_color = C['accent'] if ratio > 0.5 else ('#9b8cc4' if ratio > 0.2 else '#4a4060')
         bar.setStyleSheet(f"""
-            QProgressBar {{
-                background: {C['bg_sel']}; border: none; border-radius: 4px;
-            }}
-            QProgressBar::chunk {{
-                background: {bar_color}; border-radius: 4px;
-            }}
+            QProgressBar {{ background: {C['bg_sel']}; border: none; border-radius: 3px; }}
+            QProgressBar::chunk {{ background: {bar_color}; border-radius: 3px; }}
         """)
-        bar_h.addWidget(bar)
-        h.addWidget(bar_container, 1)
+        h.addWidget(bar, 1)
 
-        # 次数
-        count_lbl = QLabel(f'{count} 次')
-        count_lbl.setFixedWidth(60)
-        count_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        count_lbl.setStyleSheet(
+        # 次数 + 超额倍数
+        excess = r.get('excess', 1.0)
+        meta_lbl = QLabel(f'{count}次  ×{excess:.0f}')
+        meta_lbl.setFixedWidth(90)
+        meta_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        meta_lbl.setToolTip(f'你说这个词的频率是普通人的 {excess:.1f} 倍')
+        meta_lbl.setStyleSheet(
             f'color: {C["accent"] if count == max_count else C["fg_tag"]}; '
-            f'font-size: 13px; background: transparent;'
+            f'font-size: 12px; background: transparent;'
         )
-        h.addWidget(count_lbl)
+        h.addWidget(meta_lbl)
+
+        # 跨文件指示（越满越像口头禅）
+        spread = file_count / n_files if n_files > 1 else 1.0
+        spread_lbl = QLabel(f'{file_count}/{n_files}')
+        spread_lbl.setFixedWidth(36)
+        spread_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        spread_color = C['accent'] if spread >= 0.8 else ('#9b8cc4' if spread >= 0.5 else C['fg_dim'])
+        spread_lbl.setToolTip(f'在 {n_files} 个文件中的 {file_count} 个出现（越高越像口头禅）')
+        spread_lbl.setStyleSheet(
+            f'color: {spread_color}; font-size: 11px; background: transparent;'
+        )
+        h.addWidget(spread_lbl)
 
         return row
 
@@ -3123,7 +3318,9 @@ class MainWindow(QMainWindow):
         self._search_idx = -1
         self._clear_search_hl()
         if self._search_bar.isVisible():
-            self._search_bar.set_count(0)
+            self._search_bar.clear_search()   # 同时清空搜索框文字
+        # 重置标注面板过滤器，避免跨文件保留上个文件的过滤状态
+        self._annot_panel._set_filter(None)
         self._txt_editor.load_file(path)
         self._annot_panel.refresh(path)
         self._stack.setCurrentWidget(self._txt_editor)
@@ -3153,6 +3350,14 @@ class MainWindow(QMainWindow):
         new_path = f"{parent}/{new_name}" if parent else new_name
         old_tag = f"#{old_path}"
         new_tag = f"#{new_path}"
+
+        reply = QMessageBox.question(
+            self, '确认重命名',
+            f'将所有 {old_tag} 重命名为 {new_tag}？\n此操作会修改 .txt 文件内容，无法撤销。',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
 
         changed = 0
         for fp_str in self.store.get_txt_files():
