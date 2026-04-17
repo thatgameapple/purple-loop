@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QLineEdit, QFrame, QMenu, QFileDialog, QInputDialog,
     QMessageBox, QSizePolicy, QAbstractScrollArea, QDialog, QButtonGroup,
     QProgressBar, QComboBox, QGraphicsOpacityEffect, QToolButton,
-    QStyledItemDelegate
+    QStyledItemDelegate, QWidgetAction
 )
 from PyQt6.QtGui import (
     QColor, QFont, QTextCharFormat, QTextCursor, QTextDocument,
@@ -1141,6 +1141,33 @@ class TxtEditor(QTextEdit):
 
 
 
+# ── 红色删除菜单项（QWidgetAction） ──────────────────────────────────────
+
+class _RedMenuAction(QWidgetAction):
+    """菜单内红色可点击条目，用于「删除标签」"""
+    def __init__(self, text: str, callback, menu: QMenu):
+        super().__init__(menu)
+        self._menu = menu
+        self._cb   = callback
+
+        w = QWidget()
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(20, 5, 20, 5)
+        lay.setSpacing(8)
+        lbl = QLabel(text)
+        lbl.setStyleSheet('color: #e05555; font-size: 13px; background: transparent;')
+        lay.addWidget(lbl)
+        lay.addStretch()
+        w.setStyleSheet(
+            'QWidget { border-radius: 4px; background: transparent; }'
+            'QWidget:hover { background: rgba(224, 85, 85, 35); }'
+        )
+        w.setCursor(Qt.CursorShape.PointingHandCursor)
+        # 直接捕获鼠标按下：关闭菜单 → 执行回调
+        w.mousePressEvent = lambda ev: (self._menu.close(), self._cb())
+        self.setDefaultWidget(w)
+
+
 # ── 侧边栏委托：悬停显示 ··· 按钮 ────────────────────────────────────────
 
 class _SidebarTagDelegate(QStyledItemDelegate):
@@ -1200,6 +1227,7 @@ class Sidebar(QTreeWidget):
     file_selected = pyqtSignal(str)
     tag_rename    = pyqtSignal(str, str)   # old_full_tag, new_name
     tag_merge     = pyqtSignal(str, str)   # src_tag, dst_tag
+    tag_delete    = pyqtSignal(str)        # tag_path
 
     def __init__(self, store: FileStore, parent=None):
         super().__init__(parent)
@@ -1398,29 +1426,43 @@ class Sidebar(QTreeWidget):
         menu = QMenu(self)
         menu.setStyleSheet(self._MENU_SS)
 
-        # 置顶 / 取消置顶
+        # 置顶 / 取消置顶（图钉图标）
         if tag_path in pinned:
-            pa = menu.addAction('取消置顶')
+            pa = menu.addAction('  取消置顶')
         else:
-            pa = menu.addAction('⭐ 置顶')
+            pa = menu.addAction('𝗙  置顶')   # Unicode boldface F ≈ 图钉感
+        # 用更直观的 emoji 行
+        if tag_path in pinned:
+            pa.setText('  取消置顶')
+        else:
+            pa.setText('📌  置顶')
         pa.triggered.connect(lambda _, t=tag_path: self._toggle_pin(t))
 
-        # 重命名（仅普通标签）
+        # 重命名 / 合并 / 删除（仅普通标签）
         if data[0] == 'tag':
             menu.addSeparator()
-            act = menu.addAction(f'重命名「{tag_name}」')
+
+            act = menu.addAction(f'✏  重命名「{tag_name}」')
             act.triggered.connect(lambda: self._rename_tag(tag_path))
 
             # 合并到
             all_tags = self._collect_all_tags()
             if len(all_tags) > 1:
-                merge_menu = menu.addMenu('合并到')
+                merge_menu = menu.addMenu('⇢  合并到')
                 merge_menu.setStyleSheet(self._MENU_SS)
                 for t in all_tags:
                     if t != tag_path:
                         a = merge_menu.addAction(t)
                         a.triggered.connect(
                             lambda _, s=tag_path, d=t: self._merge_tag(s, d))
+
+            menu.addSeparator()
+            # 红色删除（QWidgetAction）
+            del_act = _RedMenuAction(
+                '🗑  删除标签',
+                lambda t=tag_path: self.tag_delete.emit(t),
+                menu)
+            menu.addAction(del_act)
 
         menu.exec(global_pos)
 
@@ -1477,6 +1519,7 @@ class Sidebar(QTreeWidget):
 
 
 # ── 文件内搜索浮动条 ──────────────────────────────────────────────────────
+
 
 class SearchPanel(QFrame):
     """右上角单行搜索条：所有命中在编辑器里高亮，↑/↓ 逐条跳转"""
@@ -3038,6 +3081,7 @@ class MainWindow(QMainWindow):
         self._sidebar.file_selected.connect(self._open_file)
         self._sidebar.tag_rename.connect(self._rename_tag)
         self._sidebar.tag_merge.connect(self._merge_tag)
+        self._sidebar.tag_delete.connect(self._delete_tag)
         sw_lay.addWidget(self._sidebar)
 
         self._split.addWidget(sidebar_wrap)
@@ -3470,6 +3514,38 @@ class MainWindow(QMainWindow):
         self._refresh_sidebar()
         self.statusBar().showMessage(
             f'已将 #{src} 合并到 #{dst}，影响 {changed} 个文件', 4000)
+
+    def _delete_tag(self, tag_path: str):
+        """从所有 .txt 文件中删除 #tag_path（仅移除标签标记，保留内容）"""
+        reply = QMessageBox.question(
+            self, '删除标签',
+            f'确认删除标签 #{tag_path}？\n这会从所有文件中移除该标签标记，内容本身不受影响。\n此操作无法撤销。',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # 匹配 #tag_path 及其所有子标签（如 #tag_path/子级）
+        _pat = re.compile(
+            r'\s*#' + re.escape(tag_path) + r'(?:/[\w\u4e00-\u9fff]+)*'
+            r'(?=\s|$|[，。！？、；：\n\r])'
+        )
+        changed = 0
+        for fp_str in self.store.get_txt_files():
+            fp = Path(fp_str)
+            try:
+                text = fp.read_text('utf-8')
+                new_text = _pat.sub('', text)
+                if new_text != text:
+                    fp.write_text(new_text, 'utf-8')
+                    changed += 1
+                    if fp_str == self._fp:
+                        self._txt_editor.load_file(fp_str)
+            except Exception:
+                pass
+        self._refresh_sidebar()
+        self.statusBar().showMessage(
+            f'已删除标签 #{tag_path}，影响 {changed} 个文件', 4000)
 
     # ── 标注操作 ──────────────────────────────────────────────
     def _on_mouse_released(self):
