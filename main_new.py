@@ -914,7 +914,8 @@ class TxtEditor(QTextEdit):
         saved_char = self.store.get_read_pos(path)
         def _restore():
             cur = QTextCursor(self.document())
-            cur.setPosition(min(saved_char, self.document().characterCount() - 1))
+            max_pos = max(0, self.document().characterCount() - 1)
+            cur.setPosition(min(saved_char, max_pos))
             self.setTextCursor(cur)
             self.ensureCursorVisible()
             mw = self.window()
@@ -999,7 +1000,8 @@ class TxtEditor(QTextEdit):
     def _update_count(self):
         if self._loading:
             return
-        n = len(self.toPlainText().replace('\n', '').replace(' ', ''))
+        # characterCount() 是 O(1)，避免 toPlainText() 在大文件中复制全文
+        n = max(0, self.document().characterCount() - 1)
         self._count_lbl.setText(f'{n} 字')
         self._position_count_lbl()
 
@@ -1503,7 +1505,7 @@ class SearchPanel(QFrame):
             self._db = QTimer(self)
             self._db.setSingleShot(True)
             self._db.timeout.connect(self._emit_search)
-        self._db.start(180)
+        self._db.start(350)   # 350ms 防抖，大文件搜索不卡 UI
 
     def _emit_search(self):
         win = self.parent().window() if self.parent() else None
@@ -1809,10 +1811,13 @@ class GlobalSearchDialog(QDialog):
 
         needle = kw if case_sensitive else kw.lower()
 
-        for fp in self.store.get_txt_files():
+        files = self.store.get_txt_files()
+        for i, fp in enumerate(files):
+            # 每处理 10 个文件释放一次事件循环，避免卡 UI
+            if i % 10 == 0:
+                QApplication.processEvents()
             if tag_filter:
                 scanned = TagScanner.scan(fp)
-                # 支持父标签匹配：文件里写了 #父/子/孙 也算属于 #父
                 if not any(t == tag_filter or t.startswith(tag_filter + '/') for t in scanned):
                     continue
             if annot_filter and not self.store.get_annotations(fp):
@@ -3075,6 +3080,9 @@ class MainWindow(QMainWindow):
                 if old_tag in text:
                     fp.write_text(text.replace(old_tag, new_tag), 'utf-8')
                     changed += 1
+                    # 若当前编辑器打开的就是这个文件，同步刷新显示
+                    if fp_str == self._fp:
+                        self._txt_editor.load_file(fp_str)
             except Exception:
                 pass
         self._refresh_sidebar()
@@ -3091,6 +3099,8 @@ class MainWindow(QMainWindow):
                 if f'#{src}' in text:
                     fp.write_text(text.replace(f'#{src}', f'#{dst}'), 'utf-8')
                     changed += 1
+                    if fp_str == self._fp:
+                        self._txt_editor.load_file(fp_str)
             except Exception:
                 pass
         self._refresh_sidebar()
