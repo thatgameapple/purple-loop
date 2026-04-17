@@ -3707,19 +3707,27 @@ class MainWindow(QMainWindow):
         tmp  = QTextCursor(ed.document())
         tmp.setPosition(end)
 
-        # 取选区末尾所在行的「下一行顶部」作为 y 基准
-        nxt = QTextCursor(tmp)
-        nxt.movePosition(QTextCursor.MoveOperation.Down)
-        if nxt.position() != tmp.position():          # 还有下一行
-            base_y = ed.mapToGlobal(ed.cursorRect(nxt).topLeft()).y()
-        else:                                          # 已在末行，用底部
-            base_y = ed.mapToGlobal(ed.cursorRect(tmp).bottomLeft()).y() + 6
+        # 用 QTextLayout.lineForTextPosition 精确获取选区末尾所在视觉行的渲染底部
+        # cursorRect 不含行间距；blockBoundingRect + line.rect() 才是完整渲染高度
+        line_bottom_widget = ed.cursorRect(tmp).bottom()   # fallback
+        block = tmp.block()
+        if block.isValid():
+            blk_layout = block.layout()
+            if blk_layout and blk_layout.lineCount() > 0:
+                line = blk_layout.lineForTextPosition(tmp.positionInBlock())
+                if line.isValid():
+                    doc_layout = ed.document().documentLayout()
+                    block_top  = doc_layout.blockBoundingRect(block).top()
+                    cont_off   = ed.contentOffset().y()
+                    line_bottom_widget = int(block_top + line.rect().bottom() + cont_off)
+
+        base_y = ed.mapToGlobal(QPoint(0, line_bottom_widget)).y() + 8
 
         # x：以选区末尾为中心，左移半个工具条宽
         end_gp = ed.mapToGlobal(ed.cursorRect(tmp).bottomLeft())
         sh     = self._annot_bar.sizeHint()
         x      = end_gp.x() - sh.width() // 2
-        y      = base_y + 4                           # 距下一行顶部 4px
+        y      = base_y                                # 距行渲染底部 8px
 
         scr = QApplication.primaryScreen().geometry()
         x   = max(4, min(x, scr.width() - sh.width() - 4))
