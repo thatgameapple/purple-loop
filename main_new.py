@@ -685,6 +685,7 @@ class DocHighlighter(QSyntaxHighlighter):
         super().__init__(doc)
         self.store  = store
         self._fp: str | None = None
+        self._annots: list = []          # 缓存当前文件标注，避免每块重复查询
         self._show_fillers = False
         self._show_dm      = False
         self._tag_fmt = QTextCharFormat()
@@ -702,8 +703,15 @@ class DocHighlighter(QSyntaxHighlighter):
         self._dm_structure_fmt = QTextCharFormat()
         self._dm_structure_fmt.setForeground(QColor('#9e8cc0'))   # 淡紫：结构/总结
 
-    def set_file(self, filepath: str | None):
+    def set_file(self, filepath: str | None, rehighlight: bool = True):
         self._fp = filepath
+        self._annots = self.store.get_annotations(filepath) if filepath else []
+        if rehighlight:
+            self.rehighlight()
+
+    def invalidate_annots(self):
+        """标注增删改后调用，刷新缓存并重新高亮"""
+        self._annots = self.store.get_annotations(self._fp) if self._fp else []
         self.rehighlight()
 
     def set_show_fillers(self, enabled: bool):
@@ -747,7 +755,7 @@ class DocHighlighter(QSyntaxHighlighter):
         block_start = block.position()
         block_len   = len(text)
 
-        for annot in self.store.get_annotations(self._fp):
+        for annot in self._annots:
             a_s = annot['start']
             a_e = annot['end']
             if a_s >= a_e:
@@ -886,12 +894,13 @@ class TxtEditor(QTextEdit):
 
         self._fp      = path
         self._loading = True
+        # 先更新高亮器状态（不触发 rehighlight），让 setPlainText 后的自动高亮直接用正确数据
+        self._highlighter.set_file(path, rehighlight=False)
         text = Path(path).read_text('utf-8')
         self.setPlainText(text)
         self._apply_line_spacing()   # setPlainText 会重置 block format
         self._loading = False
-        # 通知高亮器切换文件（会自动 rehighlight，不写入文档）
-        self._highlighter.set_file(path)
+        self._update_count()         # 加载完成后更新一次字数
 
         # 恢复阅读位置（延迟到布局完成后）
         saved_pos = self.store.get_read_pos(path)
@@ -905,8 +914,8 @@ class TxtEditor(QTextEdit):
 
 
     def _apply_annotations(self):
-        """标注变更后触发重绘（高亮器不写入文档，直接 rehighlight 即可）"""
-        self._highlighter.rehighlight()
+        """标注变更后刷新缓存并重绘"""
+        self._highlighter.invalidate_annots()
 
     def annotate(self, atype: str, label_text: str = '') -> dict | None:
         if not self._fp:
@@ -978,6 +987,8 @@ class TxtEditor(QTextEdit):
                 pass
 
     def _update_count(self):
+        if self._loading:
+            return
         n = len(self.toPlainText().replace('\n', '').replace(' ', ''))
         self._count_lbl.setText(f'{n} 字')
         self._position_count_lbl()
