@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import (
     QColor, QFont, QTextCharFormat, QTextCursor, QTextDocument,
     QPalette, QPixmap, QImage, QAction, QKeySequence, QSyntaxHighlighter,
-    QPainter, QFontDatabase, QCursor
+    QPainter, QFontDatabase, QCursor, QPen, QPolygonF, QIcon
 )
 from PyQt6.QtCore import (
     Qt, QTimer, QSize, QPoint, QRect, pyqtSignal, QThread, QObject,
@@ -1141,10 +1141,99 @@ class TxtEditor(QTextEdit):
 
 
 
+# ── 菜单图标绘制 ──────────────────────────────────────────────────────────
+
+def _mk_menu_icon(shape: str, color: str = '#9a9a9a', lsize: int = 15) -> QIcon:
+    """
+    用 QPainter 绘制简洁单色线形图标，HiDPI 2x 渲染。
+    shape: 'pin' | 'pencil' | 'trash'
+    """
+    dpr = 2
+    px  = QPixmap(lsize * dpr, lsize * dpr)
+    px.setDevicePixelRatio(dpr)
+    px.fill(Qt.GlobalColor.transparent)
+
+    p = QPainter(px)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    c = QColor(color)
+
+    def mk_pen(w=1.25):
+        return QPen(c, w, Qt.PenStyle.SolidLine,
+                    Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+
+    s = float(lsize)
+
+    if shape == 'pin':
+        # 图钉：菱形头部（实心）+ 针杆斜线
+        p.setPen(mk_pen(1.1))
+        p.setBrush(c)
+        diamond = QPolygonF([
+            _pt(s, 0.50, 0.07),
+            _pt(s, 0.83, 0.40),
+            _pt(s, 0.56, 0.63),
+            _pt(s, 0.23, 0.40),
+        ])
+        p.drawPolygon(diamond)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(mk_pen(1.4))
+        p.drawLine(_pt(s, 0.47, 0.63), _pt(s, 0.12, 0.92))
+
+    elif shape == 'pencil':
+        # 铅笔：斜矩形轮廓 + 笔尖三角（实心）
+        p.setPen(mk_pen(1.2))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        body = QPolygonF([
+            _pt(s, 0.22, 0.88),
+            _pt(s, 0.10, 0.68),
+            _pt(s, 0.72, 0.06),
+            _pt(s, 0.90, 0.26),
+        ])
+        p.drawPolygon(body)
+        # 笔尖
+        p.setBrush(c)
+        tip = QPolygonF([
+            _pt(s, 0.22, 0.88),
+            _pt(s, 0.10, 0.68),
+            _pt(s, 0.04, 0.96),
+        ])
+        p.drawPolygon(tip)
+        # 橡皮端分隔线
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawLine(_pt(s, 0.72, 0.06), _pt(s, 0.90, 0.26))
+
+    elif shape == 'trash':
+        # 垃圾桶：把手小矩形 + 盖子横线 + 桶身梯形 + 两条内竖线
+        from PyQt6.QtCore import QRectF
+        p.setPen(mk_pen(1.2))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        # 把手
+        p.drawRoundedRect(QRectF(s*0.37, s*0.06, s*0.26, s*0.16), 2, 2)
+        # 盖子线
+        p.drawLine(_pt(s, 0.13, 0.29), _pt(s, 0.87, 0.29))
+        # 桶身（开口梯形 + 底）
+        p.drawLine(_pt(s, 0.21, 0.29), _pt(s, 0.27, 0.91))
+        p.drawLine(_pt(s, 0.79, 0.29), _pt(s, 0.73, 0.91))
+        p.drawLine(_pt(s, 0.27, 0.91), _pt(s, 0.73, 0.91))
+        # 内竖线
+        p.drawLine(_pt(s, 0.40, 0.40), _pt(s, 0.38, 0.82))
+        p.drawLine(_pt(s, 0.60, 0.40), _pt(s, 0.62, 0.82))
+
+    p.end()
+    return QIcon(px)
+
+
+def _pt(s: float, rx: float, ry: float):
+    """辅助：按比例生成 QPointF"""
+    from PyQt6.QtCore import QPointF
+    return QPointF(s * rx, s * ry)
+
+
 # ── 红色删除菜单项（QWidgetAction） ──────────────────────────────────────
 
 class _RedMenuAction(QWidgetAction):
-    """菜单内红色可点击条目，用于「删除标签」"""
+    """菜单内红色可点击条目，用于「删除标签」；布局与图标 action 对齐。"""
+    _RED = '#e05555'
+
     def __init__(self, text: str, callback, menu: QMenu):
         super().__init__(menu)
         self._menu = menu
@@ -1152,18 +1241,29 @@ class _RedMenuAction(QWidgetAction):
 
         w = QWidget()
         lay = QHBoxLayout(w)
-        lay.setContentsMargins(20, 5, 20, 5)
-        lay.setSpacing(8)
-        lbl = QLabel(text)
-        lbl.setStyleSheet('color: #e05555; font-size: 13px; background: transparent;')
-        lay.addWidget(lbl)
+        # 左侧留 6px 与 QMenu::item 的左 padding 对齐，图标 15px + 间距 6px
+        lay.setContentsMargins(6, 4, 20, 4)
+        lay.setSpacing(6)
+
+        # 图标（与普通 action 的图标列宽一致）
+        ico_lbl = QLabel()
+        pix = _mk_menu_icon('trash', self._RED, 15).pixmap(QSize(15, 15))
+        ico_lbl.setPixmap(pix)
+        ico_lbl.setFixedSize(QSize(15, 15))
+        lay.addWidget(ico_lbl)
+
+        # 文字
+        txt_lbl = QLabel(text)
+        txt_lbl.setStyleSheet(
+            f'color: {self._RED}; font-size: 13px; background: transparent;')
+        lay.addWidget(txt_lbl)
         lay.addStretch()
+
         w.setStyleSheet(
             'QWidget { border-radius: 4px; background: transparent; }'
             'QWidget:hover { background: rgba(224, 85, 85, 35); }'
         )
         w.setCursor(Qt.CursorShape.PointingHandCursor)
-        # 直接捕获鼠标按下：关闭菜单 → 执行回调
         w.mousePressEvent = lambda ev: (self._menu.close(), self._cb())
         self.setDefaultWidget(w)
 
@@ -1412,10 +1512,16 @@ class Sidebar(QTreeWidget):
             border: 1px solid {C['border']}; border-radius: 6px;
             padding: 4px;
         }}
-        QMenu::item {{ padding: 6px 20px; border-radius: 4px; }}
+        QMenu::item {{
+            padding: 5px 20px 5px 6px;
+            border-radius: 4px;
+        }}
         QMenu::item:selected {{ background: {C['bg_sel']}; }}
+        QMenu::icon {{ padding-left: 6px; }}
         QMenu::separator {{ background: {C['border']}; height: 1px; margin: 4px 8px; }}
     """
+    # 图标颜色与侧边栏 fg 一致
+    _ICO_CLR  = '#9a9aaa'
 
     def _show_tag_menu(self, item: QTreeWidgetItem, data: tuple, global_pos: QPoint):
         """弹出标签操作菜单（供右键和 ··· 按钮共用）"""
@@ -1425,31 +1531,28 @@ class Sidebar(QTreeWidget):
 
         menu = QMenu(self)
         menu.setStyleSheet(self._MENU_SS)
+        menu.setIconSize(QSize(15, 15))
 
-        # 置顶 / 取消置顶（图钉图标）
-        if tag_path in pinned:
-            pa = menu.addAction('  取消置顶')
-        else:
-            pa = menu.addAction('𝗙  置顶')   # Unicode boldface F ≈ 图钉感
-        # 用更直观的 emoji 行
-        if tag_path in pinned:
-            pa.setText('  取消置顶')
-        else:
-            pa.setText('📌  置顶')
+        # 置顶 / 取消置顶
+        pin_text = '取消置顶' if tag_path in pinned else '置顶'
+        pa = menu.addAction(pin_text)
+        pa.setIcon(_mk_menu_icon('pin', self._ICO_CLR))
         pa.triggered.connect(lambda _, t=tag_path: self._toggle_pin(t))
 
         # 重命名 / 合并 / 删除（仅普通标签）
         if data[0] == 'tag':
             menu.addSeparator()
 
-            act = menu.addAction(f'✏  重命名「{tag_name}」')
+            act = menu.addAction(f'重命名「{tag_name}」')
+            act.setIcon(_mk_menu_icon('pencil', self._ICO_CLR))
             act.triggered.connect(lambda: self._rename_tag(tag_path))
 
             # 合并到
             all_tags = self._collect_all_tags()
             if len(all_tags) > 1:
-                merge_menu = menu.addMenu('⇢  合并到')
+                merge_menu = menu.addMenu('合并到')
                 merge_menu.setStyleSheet(self._MENU_SS)
+                merge_menu.setIconSize(QSize(15, 15))
                 for t in all_tags:
                     if t != tag_path:
                         a = merge_menu.addAction(t)
@@ -1457,9 +1560,9 @@ class Sidebar(QTreeWidget):
                             lambda _, s=tag_path, d=t: self._merge_tag(s, d))
 
             menu.addSeparator()
-            # 红色删除（QWidgetAction）
+            # 红色删除（QWidgetAction，内含对齐好的垃圾桶图标）
             del_act = _RedMenuAction(
-                '🗑  删除标签',
+                '删除标签',
                 lambda t=tag_path: self.tag_delete.emit(t),
                 menu)
             menu.addAction(del_act)
