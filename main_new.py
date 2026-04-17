@@ -1141,6 +1141,59 @@ class TxtEditor(QTextEdit):
 
 
 
+# ── 侧边栏委托：悬停显示 ··· 按钮 ────────────────────────────────────────
+
+class _SidebarTagDelegate(QStyledItemDelegate):
+    """在 tag 行右侧悬停时渲染 ··· 按钮；点击触发菜单。"""
+    _BTN_W   = 26
+    _FG_IDLE = QColor(130, 118, 170, 180)   # 低饱和紫，hover 时显示
+    _BTN_HV  = QColor(124, 111, 168, 60)    # ··· 按钮本身的背景
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        data = index.data(Qt.ItemDataRole.UserRole)
+        if not data or data[0] not in ('tag', 'tag_pin'):
+            return
+        from PyQt6.QtWidgets import QStyle
+        is_hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        if not is_hover:
+            return
+        btn = self._btn_rect(option.rect)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self._BTN_HV)
+        painter.drawRoundedRect(btn, 4, 4)
+        painter.setPen(self._FG_IDLE)
+        f = QFont('PingFang SC', 13)
+        f.setBold(True)
+        painter.setFont(f)
+        painter.drawText(btn, Qt.AlignmentFlag.AlignCenter, '···')
+        painter.restore()
+
+    def _btn_rect(self, item_rect: QRect) -> QRect:
+        margin = 4
+        h = item_rect.height() - margin * 2
+        return QRect(item_rect.right() - self._BTN_W - margin,
+                     item_rect.top() + margin,
+                     self._BTN_W, h)
+
+    def editorEvent(self, event, model, option, index):
+        from PyQt6.QtCore import QEvent
+        if event.type() == QEvent.Type.MouseButtonRelease:
+            data = index.data(Qt.ItemDataRole.UserRole)
+            if data and data[0] in ('tag', 'tag_pin'):
+                btn = self._btn_rect(option.rect)
+                if btn.contains(event.pos()):
+                    tree = self.parent()
+                    item = tree.itemFromIndex(index)
+                    if item:
+                        global_pos = tree.viewport().mapToGlobal(event.pos())
+                        tree._show_tag_menu(item, data, global_pos)
+                    return True
+        return super().editorEvent(event, model, option, index)
+
+
 # ── 侧边栏 ────────────────────────────────────────────────────────────────
 
 class Sidebar(QTreeWidget):
@@ -1179,6 +1232,11 @@ class Sidebar(QTreeWidget):
                 background: {C['bg_sidebar']};
             }}
         """)
+
+        # 安装 ··· 悬停委托
+        self.setItemDelegate(_SidebarTagDelegate(self))
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
 
         self.itemDoubleClicked.connect(self._on_double_click)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -1320,65 +1378,74 @@ class Sidebar(QTreeWidget):
         for i in range(self.topLevelItemCount()):
             walk(self.topLevelItem(i))
 
+    _MENU_SS = f"""
+        QMenu {{
+            background: {C['bg_input']}; color: {C['fg']};
+            border: 1px solid {C['border']}; border-radius: 6px;
+            padding: 4px;
+        }}
+        QMenu::item {{ padding: 6px 20px; border-radius: 4px; }}
+        QMenu::item:selected {{ background: {C['bg_sel']}; }}
+        QMenu::separator {{ background: {C['border']}; height: 1px; margin: 4px 8px; }}
+    """
+
+    def _show_tag_menu(self, item: QTreeWidgetItem, data: tuple, global_pos: QPoint):
+        """弹出标签操作菜单（供右键和 ··· 按钮共用）"""
+        tag_path = data[1]
+        tag_name = tag_path.split('/')[-1]
+        pinned   = self._get_pinned()
+
+        menu = QMenu(self)
+        menu.setStyleSheet(self._MENU_SS)
+
+        # 置顶 / 取消置顶
+        if tag_path in pinned:
+            pa = menu.addAction('取消置顶')
+        else:
+            pa = menu.addAction('⭐ 置顶')
+        pa.triggered.connect(lambda _, t=tag_path: self._toggle_pin(t))
+
+        # 重命名（仅普通标签）
+        if data[0] == 'tag':
+            menu.addSeparator()
+            act = menu.addAction(f'重命名「{tag_name}」')
+            act.triggered.connect(lambda: self._rename_tag(tag_path))
+
+            # 合并到
+            all_tags = self._collect_all_tags()
+            if len(all_tags) > 1:
+                merge_menu = menu.addMenu('合并到')
+                merge_menu.setStyleSheet(self._MENU_SS)
+                for t in all_tags:
+                    if t != tag_path:
+                        a = merge_menu.addAction(t)
+                        a.triggered.connect(
+                            lambda _, s=tag_path, d=t: self._merge_tag(s, d))
+
+        menu.exec(global_pos)
+
     def _on_ctx(self, pos: QPoint):
         item = self.itemAt(pos)
+        if not item:
+            return
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if data and data[0] in ('tag', 'tag_pin'):
+            self._show_tag_menu(item, data, self.mapToGlobal(pos))
+            return
+
+        # 文件行右键菜单
         menu = QMenu(self)
-        menu.setStyleSheet(f"""
-            QMenu {{
-                background: {C['bg_input']}; color: {C['fg']};
-                border: 1px solid {C['border']}; border-radius: 6px;
-                padding: 4px;
-            }}
-            QMenu::item {{ padding: 6px 20px; border-radius: 4px; }}
-            QMenu::item:selected {{ background: {C['bg_sel']}; }}
-            QMenu::separator {{ background: {C['border']}; height: 1px; margin: 4px 8px; }}
-        """)
-
-        if item:
-            data = item.data(0, Qt.ItemDataRole.UserRole)
-            if data and data[0] in ('tag', 'tag_pin'):
-                tag_path = data[1]
-                tag_name = tag_path.split('/')[-1]
-                pinned   = self._get_pinned()
-
-                # 置顶 / 取消置顶
-                if tag_path in pinned:
-                    pa = menu.addAction('取消置顶')
-                else:
-                    pa = menu.addAction('⭐ 置顶')
-                pa.triggered.connect(lambda _, t=tag_path: self._toggle_pin(t))
-                menu.addSeparator()
-
-                # 重命名（仅普通标签）
-                if data[0] == 'tag':
-                    act = menu.addAction(f'重命名「{tag_name}」')
-                    act.triggered.connect(lambda: self._rename_tag(tag_path))
-
-                    # 合并到
-                    all_tags = self._collect_all_tags()
-                    if len(all_tags) > 1:
-                        merge_menu = menu.addMenu('合并到')
-                        merge_menu.setStyleSheet(menu.styleSheet())
-                        for t in all_tags:
-                            if t != tag_path:
-                                a = merge_menu.addAction(t)
-                                a.triggered.connect(
-                                    lambda _, s=tag_path, d=t: self._merge_tag(s, d))
-
-                menu.addSeparator()
-
-            elif data and data[0] == 'file':
-                fp = data[1]
-                act_reveal = menu.addAction('在 Finder 中显示')
-                act_reveal.triggered.connect(
-                    lambda checked=False, f=fp: subprocess.run(['open', '-R', f]))
-                if fp in self.store.get_txt_files():
-                    act_rm = menu.addAction('移除')
-                    act_rm.triggered.connect(
-                        lambda checked=False, f=fp: (self.store.remove_txt(f),
-                                 self.window()._refresh_sidebar()))
-                menu.addSeparator()
-
+        menu.setStyleSheet(self._MENU_SS)
+        if data and data[0] == 'file':
+            fp = data[1]
+            act_reveal = menu.addAction('在 Finder 中显示')
+            act_reveal.triggered.connect(
+                lambda checked=False, f=fp: subprocess.run(['open', '-R', f]))
+            if fp in self.store.get_txt_files():
+                act_rm = menu.addAction('移除')
+                act_rm.triggered.connect(
+                    lambda checked=False, f=fp: (self.store.remove_txt(f),
+                             self.window()._refresh_sidebar()))
         menu.exec(self.mapToGlobal(pos))
 
     def _collect_all_tags(self) -> list[str]:
