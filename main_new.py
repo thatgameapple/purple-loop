@@ -1924,6 +1924,57 @@ class _ComboHoverDelegate(QStyledItemDelegate):
         return sh.__class__(sh.width(), max(sh.height(), 26))
 
 
+# ── 全局搜索：后台 Worker ────────────────────────────────────────────────
+
+class SearchWorker(QObject):
+    """在子线程里执行搜索，边搜边发信号，支持随时取消"""
+    result_ready = pyqtSignal(str, str, list)   # fp, full_text, [(pos, mlen), ...]
+    finished     = pyqtSignal()
+
+    def __init__(self, files, needle, case_sensitive, tag_filter, annot_filter, store):
+        super().__init__()
+        self._files          = files
+        self._needle         = needle
+        self._case_sensitive = case_sensitive
+        self._tag_filter     = tag_filter
+        self._annot_filter   = annot_filter
+        self._store          = store
+        self._cancelled      = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        needle = self._needle if self._case_sensitive else self._needle.lower()
+        for fp in self._files:
+            if self._cancelled:
+                break
+            # 标签过滤
+            if self._tag_filter:
+                scanned = TagScanner.scan(fp)
+                if not any(t == self._tag_filter or
+                           t.startswith(self._tag_filter + '/') for t in scanned):
+                    continue
+            # 标注过滤
+            if self._annot_filter and not self._store.get_annotations(fp):
+                continue
+            try:
+                full = Path(fp).read_text('utf-8')
+            except Exception:
+                continue
+            haystack = full if self._case_sensitive else full.lower()
+            hits, start = [], 0
+            while True:
+                idx = haystack.find(needle, start)
+                if idx < 0:
+                    break
+                hits.append((idx, len(self._needle)))
+                start = idx + 1
+            if hits and not self._cancelled:
+                self.result_ready.emit(fp, full, hits)
+        self.finished.emit()
+
+
 # ── 全局搜索窗口 ──────────────────────────────────────────────────────────
 
 class GlobalSearchDialog(QDialog):
@@ -1977,6 +2028,8 @@ class GlobalSearchDialog(QDialog):
         self._flat_hits: list[tuple] = []   # [(fp, full_text, pos, mlen), ...] 全局扁平列表
         self._global_idx = 0
         self._sel_fp = ''
+        self._search_thread: QThread | None = None
+        self._search_worker: SearchWorker | None = None
         self.resize(1000, 660)
         self.setMinimumSize(780, 500)
         self.setStyleSheet(self._SS)
@@ -2180,11 +2233,23 @@ class GlobalSearchDialog(QDialog):
             self._db.timeout.connect(self._run_search)
         self._db.start(260)
 
+    def _stop_search(self):
+        """取消并清理上一次搜索线程"""
+        if self._search_worker:
+            self._search_worker.cancel()
+        if self._search_thread:
+            self._search_thread.quit()
+            self._search_thread.wait(200)   # 最多等 200ms，不阻塞 UI
+        self._search_thread = None
+        self._search_worker = None
+
     def _run_search(self):
         kw = self._input.text().strip()
         if not kw:
+            self._stop_search()
             self._show_recent()
             return
+
         # 更新历史
         if kw in self._recent:
             self._recent.remove(kw)
@@ -2192,53 +2257,55 @@ class GlobalSearchDialog(QDialog):
         self._recent = self._recent[:self._MAX_RECENT]
         self.store.set_config('recent_searches', self._recent)
 
-        case_sensitive = self._case_btn.isChecked()
-        tag_filter     = self._tag_combo.currentData()
-        annot_filter   = self._annot_btn.isChecked()
-        self._results  = []
+        # 取消上一次搜索
+        self._stop_search()
 
-        needle = kw if case_sensitive else kw.lower()
-
-        files = self.store.get_txt_files()
-        for i, fp in enumerate(files):
-            # 每处理 10 个文件释放一次事件循环，避免卡 UI
-            if i % 10 == 0:
-                QApplication.processEvents()
-            if tag_filter:
-                scanned = TagScanner.scan(fp)
-                if not any(t == tag_filter or t.startswith(tag_filter + '/') for t in scanned):
-                    continue
-            if annot_filter and not self.store.get_annotations(fp):
-                continue
-            try:
-                full = Path(fp).read_text('utf-8')
-            except Exception:
-                continue
-            haystack = full if case_sensitive else full.lower()
-            hits = []
-            start = 0
-            while True:
-                idx = haystack.find(needle, start)
-                if idx < 0:
-                    break
-                hits.append((idx, len(kw)))
-                start = idx + 1
-            if hits:
-                self._results.append((fp, full, hits))
-
-        # 构建全局扁平命中列表
+        # 重置结果
+        self._results   = []
         self._flat_hits = []
-        for fp, full, hits in self._results:
-            for pos, mlen in hits:
-                self._flat_hits.append((fp, full, pos, mlen))
         self._global_idx = 0
-        self._render_results(kw)
-
-    def _render_results(self, kw: str):
+        self._kw_current = kw
         self._clear_list()
-        total = len(self._flat_hits)
-        if not self._results:
+        self._result_lbl.setText('搜索中…')
+
+        # 启动后台搜索线程
+        worker = SearchWorker(
+            files          = self.store.get_txt_files(),
+            needle         = kw,
+            case_sensitive = self._case_btn.isChecked(),
+            tag_filter     = self._tag_combo.currentData(),
+            annot_filter   = self._annot_btn.isChecked(),
+            store          = self.store,
+        )
+        thread = QThread(self)
+        worker.moveToThread(thread)
+
+        worker.result_ready.connect(self._on_result_ready)
+        worker.finished.connect(self._on_search_finished)
+        thread.started.connect(worker.run)
+
+        self._search_worker = worker
+        self._search_thread = thread
+        thread.start()
+
+    def _on_result_ready(self, fp: str, full: str, hits: list):
+        """子线程每找到一个文件就增量渲染，用户立刻看到结果"""
+        self._results.append((fp, full, hits))
+        for pos, mlen in hits:
+            self._flat_hits.append((fp, full, pos, mlen))
+        # 增量追加这一个文件的结果卡片
+        self._append_file_result(fp, full, hits, self._kw_current)
+        total = sum(len(h) for _, _, h in self._results)
+        self._result_lbl.setText(f'{total} 条 · {len(self._results)} 文件')
+
+    def _on_search_finished(self):
+        """搜索完成"""
+        total = sum(len(h) for _, _, h in self._results)
+        if self._results:
+            self._result_lbl.setText(f'{total} 条 · {len(self._results)} 文件')
+        else:
             self._result_lbl.setText('无结果')
+            self._clear_list()
             lbl = QLabel('无匹配结果')
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet(f"color: {C['fg_dim']}; font-size: 13px; padding: 20px;")
@@ -2247,57 +2314,55 @@ class GlobalSearchDialog(QDialog):
             self._preview_file_lbl.setText('选择左侧结果查看全文')
             self._hit_lbl.setText('')
             self._file_lbl.setText('')
-            return
-        self._result_lbl.setText(f'{total} 条 · {len(self._results)} 文件')
+        self._search_thread = None
+        self._search_worker = None
 
+    def _append_file_result(self, fp: str, full: str, hits: list, kw: str):
+        """增量追加一个文件的搜索结果到左侧列表（子线程 result_ready 信号触发）"""
         case_sensitive = self._case_btn.isChecked()
-        flat_offset = 0   # 当前文件在全局列表中的起始偏移
+        # 该文件在全局列表中的起始偏移 = 已有的 flat_hits 数减去本次追加前的
+        file_start = len(self._flat_hits) - len(hits)
 
-        for fp, full, hits in self._results:
-            file_start = flat_offset   # 该文件第一条的全局编号
+        # 文件标题行
+        hdr = QFrame()
+        hdr.setCursor(Qt.CursorShape.PointingHandCursor)
+        hdr.setStyleSheet(f"""
+            QFrame {{ background: {C['bg_input']}; border-bottom: 1px solid {C['border']}; }}
+            QFrame:hover {{ background: #2a2d34; }}
+        """)
+        hdr_lay = QHBoxLayout(hdr)
+        hdr_lay.setContentsMargins(12, 7, 10, 7)
+        name_lbl = QLabel(Path(fp).stem)
+        name_lbl.setStyleSheet(f"color: {C['fg']}; font-size: 13px; font-weight: bold;")
+        hdr_lay.addWidget(name_lbl)
+        cnt_lbl = QLabel(f'{len(hits)}')
+        cnt_lbl.setStyleSheet(
+            f"background: {C['accent']}; color: white; border-radius: 8px;"
+            f"padding: 1px 6px; font-size: 11px;")
+        hdr_lay.addWidget(cnt_lbl)
+        hdr_lay.addStretch()
+        def _hdr_click(e, gi=file_start):
+            if e.button() == Qt.MouseButton.LeftButton:
+                self._jump_to_global(gi)
+        hdr.mousePressEvent = _hdr_click
+        self._list_vlay.insertWidget(self._list_vlay.count()-1, hdr)
 
-            # 文件标题行
-            hdr = QFrame()
-            hdr.setCursor(Qt.CursorShape.PointingHandCursor)
-            hdr.setStyleSheet(f"""
-                QFrame {{ background: {C['bg_input']}; border-bottom: 1px solid {C['border']}; }}
-                QFrame:hover {{ background: #2a2d34; }}
-            """)
-            hdr_lay = QHBoxLayout(hdr)
-            hdr_lay.setContentsMargins(12, 7, 10, 7)
-            name_lbl = QLabel(Path(fp).stem)
-            name_lbl.setStyleSheet(f"color: {C['fg']}; font-size: 13px; font-weight: bold;")
-            hdr_lay.addWidget(name_lbl)
-            cnt_lbl = QLabel(f'{len(hits)}')
-            cnt_lbl.setStyleSheet(
-                f"background: {C['accent']}; color: white; border-radius: 8px;"
-                f"padding: 1px 6px; font-size: 11px;")
-            hdr_lay.addWidget(cnt_lbl)
-            hdr_lay.addStretch()
-            def _hdr_click(e, gi=file_start):
-                if e.button() == Qt.MouseButton.LeftButton:
-                    self._jump_to_global(gi)
-            hdr.mousePressEvent = _hdr_click
-            self._list_vlay.insertWidget(self._list_vlay.count()-1, hdr)
+        # 每条命中（每文件最多渲染 50 条）
+        _MAX_PER_FILE = 50
+        for i, (pos, mlen) in enumerate(hits):
+            if i >= _MAX_PER_FILE:
+                rest = len(hits) - _MAX_PER_FILE
+                more_lbl = QLabel(f'  …还有 {rest} 条，请缩小搜索范围')
+                more_lbl.setStyleSheet(
+                    f'color: {C["fg_dim"]}; font-size: 12px; padding: 4px 12px;')
+                self._list_vlay.insertWidget(self._list_vlay.count()-1, more_lbl)
+                break
+            global_i = file_start + i
+            row = self._make_hit_row(full, pos, mlen, global_i, kw, case_sensitive)
+            self._list_vlay.insertWidget(self._list_vlay.count()-1, row)
 
-            # 每条命中（每文件最多渲染 50 条，避免大文件卡顿）
-            _MAX_PER_FILE = 50
-            for i, (pos, mlen) in enumerate(hits):
-                if i >= _MAX_PER_FILE:
-                    rest = len(hits) - _MAX_PER_FILE
-                    more_lbl = QLabel(f'  …还有 {rest} 条，请缩小搜索范围')
-                    more_lbl.setStyleSheet(
-                        f'color: {C["fg_dim"]}; font-size: 12px; padding: 4px 12px;')
-                    self._list_vlay.insertWidget(self._list_vlay.count()-1, more_lbl)
-                    break
-                global_i = flat_offset + i
-                row = self._make_hit_row(full, pos, mlen, global_i, kw, case_sensitive)
-                self._list_vlay.insertWidget(self._list_vlay.count()-1, row)
-
-            flat_offset += len(hits)
-
-        # 自动跳到第一条
-        if self._flat_hits:
+        # 第一个结果出现时自动跳到它
+        if len(self._results) == 1 and self._flat_hits:
             self._jump_to_global(0)
 
     def _make_hit_row(self, full: str, pos: int, mlen: int,
@@ -2457,6 +2522,10 @@ class GlobalSearchDialog(QDialog):
             self.reject()
         else:
             super().keyPressEvent(event)
+
+    def closeEvent(self, event):
+        self._stop_search()   # 关闭窗口时确保后台线程停止
+        super().closeEvent(event)
 
 
 # ── 文字标签弹窗（颜色 + 可选标签名）────────────────────────────────────
