@@ -662,7 +662,7 @@ class AnnotPanel(QWidget):
             QPushButton:hover {{ color: #ff6b6b; }}
         """)
         aid = annot['id']
-        del_btn.clicked.connect(lambda _, a=aid: self.delete.emit(a))
+        del_btn.clicked.connect(lambda _, a=aid: QTimer.singleShot(0, lambda: self.delete.emit(a)))
         top.addWidget(del_btn)
         lay.addLayout(top)
 
