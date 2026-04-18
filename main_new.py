@@ -2228,12 +2228,21 @@ class SearchWorker(QObject):
             except Exception:
                 continue
             haystack = full if self._case_sensitive else full.lower()
+
+            # 预计算所有 #tag 的字符范围，命中落在标签内的一律跳过
+            tag_spans = [(m.start(), m.end()) for m in TAG_RE.finditer(full)]
+
             hits, start = [], 0
             while True:
                 idx = haystack.find(needle, start)
                 if idx < 0:
                     break
-                hits.append((idx, len(self._needle)))
+                end = idx + len(self._needle)
+                # 若命中区间与任何 tag span 有交叉，跳过
+                in_tag = any(ts <= idx < te or ts < end <= te
+                             for ts, te in tag_spans)
+                if not in_tag:
+                    hits.append((idx, len(self._needle)))
                 start = idx + 1
             if hits and not self._cancelled:
                 self.result_ready.emit(fp, full, hits)
