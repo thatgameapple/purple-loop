@@ -1316,7 +1316,7 @@ class _RedMenuAction(QWidgetAction):
             'QWidget:hover { background: rgba(124, 111, 168, 40); }'
         )
         w.setCursor(Qt.CursorShape.PointingHandCursor)
-        w.mousePressEvent = lambda ev: (self._menu.close(), self._cb())
+        w.mousePressEvent = lambda ev: QTimer.singleShot(0, lambda: (self._menu.close(), self._cb()))
         self.setDefaultWidget(w)
 
 
