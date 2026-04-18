@@ -888,8 +888,10 @@ class TxtEditor(QTextEdit):
         cur = QTextCursor(doc)
         cur.select(QTextCursor.SelectionType.Document)
         blk_fmt = QTextBlockFormat()
-        blk_fmt.setLineHeight(175, 1)       # 1.75 倍行距（中文阅读最优）
-        blk_fmt.setBottomMargin(10)         # 段落间距
+        blk_fmt.setLineHeight(175, 1)       # 1.75 倍行距（中文阅读最优，Typotheque CJK 研究）
+        blk_fmt.setTopMargin(4)             # 顶部呼吸感（对称视觉）
+        blk_fmt.setBottomMargin(32)         # 段落间距：32px ≈ 1.7x 行间白，让段落边界清晰可辨
+                                            # 原 10px 导致段落分隔感几乎等同换行（W3C WCAG 建议 ≥2x 字号）
         cur.setBlockFormat(blk_fmt)
         doc.setUndoRedoEnabled(True)
 
