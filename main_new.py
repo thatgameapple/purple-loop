@@ -2,6 +2,8 @@
 """purple loop v2 — PyQt6 + inline #tag"""
 
 import sys, os, json, re, uuid, subprocess
+import faulthandler
+faulthandler.enable()   # segfault 时输出 Python 调用栈到 stderr
 from datetime import datetime
 from pathlib import Path
 
