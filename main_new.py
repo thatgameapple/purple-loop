@@ -2230,7 +2230,9 @@ class SearchWorker(QObject):
             haystack = full if self._case_sensitive else full.lower()
 
             # 预计算所有 #tag 的字符范围，命中落在标签内的一律跳过
-            tag_spans = [(m.start(), m.end()) for m in TAG_RE.finditer(full)]
+            # 用 Python 原生 re 而非 TAG_RE（Qt 对象不可在子线程使用）
+            _tag_re = re.compile(r'#[\w\u4e00-\u9fff]+(?:/[\w\u4e00-\u9fff]+)*')
+            tag_spans = [(m.start(), m.end()) for m in _tag_re.finditer(full)]
 
             hits, start = [], 0
             while True:
@@ -2554,8 +2556,10 @@ class GlobalSearchDialog(QDialog):
         thread = QThread(self)
         worker.moveToThread(thread)
 
-        worker.result_ready.connect(self._on_result_ready)
-        worker.finished.connect(self._on_search_finished)
+        worker.result_ready.connect(self._on_result_ready,
+                                    Qt.ConnectionType.QueuedConnection)
+        worker.finished.connect(self._on_search_finished,
+                                Qt.ConnectionType.QueuedConnection)
         thread.started.connect(worker.run)
 
         self._search_worker = worker
