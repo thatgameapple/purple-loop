@@ -1738,6 +1738,7 @@ class Sidebar(QTreeWidget):
         btn_row.addWidget(ok_btn)
         lay.addLayout(btn_row)
 
+        dlg.setMinimumWidth(360)
         dlg.adjustSize()
         # 居中于主窗口
         win = self.window()
