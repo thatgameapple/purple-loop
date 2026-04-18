@@ -1779,10 +1779,92 @@ class Sidebar(QTreeWidget):
 
     def _rename_tag(self, tag_path: str):
         old_name = tag_path.split('/')[-1]
-        new_name, ok = QInputDialog.getText(
-            self, '重命名标签', f'标签「{old_name}」新名称：', text=old_name)
-        if ok and new_name.strip() and new_name.strip() != old_name:
-            self.tag_rename.emit(tag_path, new_name.strip())
+
+        dlg = QDialog(self.window(), Qt.WindowType.FramelessWindowHint)
+        dlg.setModal(True)
+        dlg.setStyleSheet(f"""
+            QDialog {{
+                background: {C['bg_input']};
+                border: 1px solid {C['border']};
+                border-radius: 10px;
+            }}
+        """)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 18, 20, 16)
+        lay.setSpacing(12)
+
+        lbl = QLabel(f'重命名标签「{old_name}」')
+        lbl.setStyleSheet(f"color: {C['fg']}; font-size: 14px; font-weight: bold;")
+        lay.addWidget(lbl)
+
+        edit = QLineEdit(old_name)
+        edit.setStyleSheet(f"""
+            QLineEdit {{
+                background: {C['bg_sel']}; color: {C['fg']};
+                border: 1px solid {C['border']}; border-radius: 6px;
+                padding: 7px 10px; font-size: 14px;
+            }}
+            QLineEdit:focus {{ border-color: {C['accent']}; }}
+        """)
+        edit.selectAll()
+        lay.addWidget(edit)
+
+        err_lbl = QLabel('')
+        err_lbl.setStyleSheet("color: #e06c6c; font-size: 12px;")
+        err_lbl.hide()
+        lay.addWidget(err_lbl)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        _btn_ss = f"""
+            QPushButton {{
+                background: {C['bg_sel']}; color: {C['fg_dim']};
+                border: none; border-radius: 6px;
+                padding: 7px 20px; font-size: 13px;
+            }}
+            QPushButton:hover {{ color: {C['fg']}; }}
+        """
+        _ok_ss = f"""
+            QPushButton {{
+                background: {C['accent']}; color: white;
+                border: none; border-radius: 6px;
+                padding: 7px 20px; font-size: 13px; font-weight: bold;
+            }}
+            QPushButton:hover {{ background: #8b7fc0; }}
+        """
+        cancel_btn = QPushButton('取消')
+        cancel_btn.setStyleSheet(_btn_ss)
+        cancel_btn.clicked.connect(dlg.reject)
+        ok_btn = QPushButton('确认')
+        ok_btn.setStyleSheet(_ok_ss)
+        ok_btn.setDefault(True)
+
+        def _do_rename():
+            new_name = edit.text().strip()
+            if not new_name:
+                err_lbl.setText('标签名不能为空'); err_lbl.show(); return
+            if new_name == old_name:
+                dlg.reject(); return
+            dlg.accept()
+
+        ok_btn.clicked.connect(_do_rename)
+        edit.returnPressed.connect(_do_rename)
+
+        btn_row.addStretch()
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(ok_btn)
+        lay.addLayout(btn_row)
+
+        dlg.setMinimumWidth(320)
+        dlg.adjustSize()
+        win = self.window()
+        geo = win.geometry()
+        dlg.move(geo.center() - dlg.rect().center())
+
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            new_name = edit.text().strip()
+            if new_name and new_name != old_name:
+                self.tag_rename.emit(tag_path, new_name)
 
     def _merge_tag(self, src: str, dst: str):
         ok = QMessageBox.question(
