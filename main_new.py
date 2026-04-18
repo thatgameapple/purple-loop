@@ -85,6 +85,68 @@ _DM_STRUCTURE = [
     '总结一下', '回到', '继续',
 ]
 
+def _confirm_dialog(parent, title: str, message: str,
+                    ok_text='确认', cancel_text='取消', danger=False) -> bool:
+    """统一风格的确认弹窗，替代系统 QMessageBox.question。返回 True = 确认。"""
+    dlg = QDialog(parent, Qt.WindowType.FramelessWindowHint)
+    dlg.setModal(True)
+    dlg.setStyleSheet(f"""
+        QDialog {{
+            background: {C['bg_input']};
+            border: 1px solid {C['border']};
+            border-radius: 10px;
+        }}
+    """)
+    lay = QVBoxLayout(dlg)
+    lay.setContentsMargins(20, 18, 20, 16)
+    lay.setSpacing(12)
+
+    t = QLabel(title)
+    t.setStyleSheet(f"color: {C['fg']}; font-size: 14px; font-weight: bold;")
+    lay.addWidget(t)
+
+    m = QLabel(message)
+    m.setStyleSheet(f"color: {C['fg_dim']}; font-size: 13px;")
+    m.setWordWrap(True)
+    lay.addWidget(m)
+
+    btn_row = QHBoxLayout()
+    btn_row.setSpacing(8)
+    cancel_btn = QPushButton(cancel_text)
+    cancel_btn.setStyleSheet(f"""
+        QPushButton {{
+            background: {C['bg_sel']}; color: {C['fg_dim']};
+            border: none; border-radius: 6px;
+            padding: 7px 20px; font-size: 13px;
+        }}
+        QPushButton:hover {{ color: {C['fg']}; }}
+    """)
+    cancel_btn.clicked.connect(dlg.reject)
+    ok_color = '#c0504d' if danger else C['accent']
+    ok_hover  = '#d06060' if danger else '#8b7fc0'
+    ok_btn = QPushButton(ok_text)
+    ok_btn.setStyleSheet(f"""
+        QPushButton {{
+            background: {ok_color}; color: white;
+            border: none; border-radius: 6px;
+            padding: 7px 20px; font-size: 13px; font-weight: bold;
+        }}
+        QPushButton:hover {{ background: {ok_hover}; }}
+    """)
+    ok_btn.clicked.connect(dlg.accept)
+    btn_row.addStretch()
+    btn_row.addWidget(cancel_btn)
+    btn_row.addWidget(ok_btn)
+    lay.addLayout(btn_row)
+
+    dlg.setMinimumWidth(300)
+    dlg.adjustSize()
+    if parent:
+        geo = parent.geometry() if hasattr(parent, 'geometry') else parent.window().geometry()
+        dlg.move(geo.center() - dlg.rect().center())
+    return dlg.exec() == QDialog.DialogCode.Accepted
+
+
 def _build_dm_re(words: list) -> re.Pattern:
     return re.compile('(' + '|'.join(re.escape(w) for w in words) + ')')
 
@@ -508,12 +570,9 @@ class AnnotPanel(QWidget):
         n = len(self.store.get_annotations(self._fp))
         if n == 0:
             return
-        reply = QMessageBox.question(
-            self, '清除所有标注',
-            f'删除当前文件全部 {n} 条标注？此操作不可撤销。',
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No)
-        if reply == QMessageBox.StandardButton.Yes:
+        if _confirm_dialog(self.window(), '清除所有标注',
+                           f'删除当前文件全部 {n} 条标注？此操作不可撤销。',
+                           ok_text='清除', danger=True):
             self.clear_all.emit()
 
     def refresh(self, filepath: str | None):
@@ -1867,11 +1926,62 @@ class Sidebar(QTreeWidget):
                 self.tag_rename.emit(tag_path, new_name)
 
     def _merge_tag(self, src: str, dst: str):
-        ok = QMessageBox.question(
-            self, '合并标签',
-            f'将所有 #{src} 替换为 #{dst}？\n此操作会修改 .txt 文件内容。',
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if ok == QMessageBox.StandardButton.Yes:
+        dlg = QDialog(self.window(), Qt.WindowType.FramelessWindowHint)
+        dlg.setModal(True)
+        dlg.setStyleSheet(f"""
+            QDialog {{
+                background: {C['bg_input']};
+                border: 1px solid {C['border']};
+                border-radius: 10px;
+            }}
+        """)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 18, 20, 16)
+        lay.setSpacing(12)
+
+        title = QLabel('合并标签')
+        title.setStyleSheet(f"color: {C['fg']}; font-size: 14px; font-weight: bold;")
+        lay.addWidget(title)
+
+        msg = QLabel(f'将所有 #{src} 重命名为 #{dst}？\n此操作会修改 .txt 文件内容，无法撤销。')
+        msg.setStyleSheet(f"color: {C['fg_dim']}; font-size: 13px;")
+        msg.setWordWrap(True)
+        lay.addWidget(msg)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        cancel_btn = QPushButton('取消')
+        cancel_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {C['bg_sel']}; color: {C['fg_dim']};
+                border: none; border-radius: 6px;
+                padding: 7px 20px; font-size: 13px;
+            }}
+            QPushButton:hover {{ color: {C['fg']}; }}
+        """)
+        cancel_btn.clicked.connect(dlg.reject)
+        ok_btn = QPushButton('确认合并')
+        ok_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {C['accent']}; color: white;
+                border: none; border-radius: 6px;
+                padding: 7px 20px; font-size: 13px; font-weight: bold;
+            }}
+            QPushButton:hover {{ background: #8b7fc0; }}
+        """)
+        ok_btn.clicked.connect(dlg.accept)
+        btn_row.addStretch()
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(ok_btn)
+        lay.addLayout(btn_row)
+
+        dlg.setMinimumWidth(300)
+        dlg.adjustSize()
+        win = self.window()
+        geo = win.geometry()
+        dlg.move(geo.center() - dlg.rect().center())
+
+        if dlg.exec() == QDialog.DialogCode.Accepted:
             self.tag_merge.emit(src, dst)
 
 
@@ -3930,12 +4040,9 @@ class MainWindow(QMainWindow):
         old_tag = f"#{old_path}"
         new_tag = f"#{new_path}"
 
-        reply = QMessageBox.question(
-            self, '确认重命名',
-            f'将所有 {old_tag} 重命名为 {new_tag}？\n此操作会修改 .txt 文件内容，无法撤销。',
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No)
-        if reply != QMessageBox.StandardButton.Yes:
+        if not _confirm_dialog(self, '确认重命名',
+                               f'将所有 {old_tag} 重命名为 {new_tag}？\n此操作会修改 .txt 文件内容，无法撤销。',
+                               ok_text='重命名'):
             return
 
         # 用正则精确匹配：#old_path 后跟 / 或非标签字符，避免误改同前缀的其他标签
@@ -3985,12 +4092,9 @@ class MainWindow(QMainWindow):
 
     def _delete_tag(self, tag_path: str):
         """从所有 .txt 文件中删除 #tag_path（仅移除标签标记，保留内容）"""
-        reply = QMessageBox.question(
-            self, '删除标签',
-            f'确认删除标签 #{tag_path}？\n这会从所有文件中移除该标签标记，内容本身不受影响。\n此操作无法撤销。',
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No)
-        if reply != QMessageBox.StandardButton.Yes:
+        if not _confirm_dialog(self, '删除标签',
+                               f'确认删除标签 #{tag_path}？\n这会从所有文件中移除该标签标记，内容本身不受影响。\n此操作无法撤销。',
+                               ok_text='删除', danger=True):
             return
 
         # 匹配 #tag_path 及其所有子标签（如 #tag_path/子级）
@@ -4154,12 +4258,9 @@ class MainWindow(QMainWindow):
         if n == 0:
             self.statusBar().showMessage('当前文件没有标注', 2000)
             return
-        reply = QMessageBox.question(
-            self, '清除所有标注',
-            f'删除当前文件全部 {n} 条标注？此操作不可撤销。',
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No)
-        if reply == QMessageBox.StandardButton.Yes:
+        if _confirm_dialog(self, '清除所有标注',
+                           f'删除当前文件全部 {n} 条标注？此操作不可撤销。',
+                           ok_text='清除', danger=True):
             self._clear_all_annots()
 
     def _jump_to_annot(self, annot_id: str):
