@@ -1536,7 +1536,7 @@ class Sidebar(QTreeWidget):
     def _on_double_click(self, item: QTreeWidgetItem, col: int):
         data = item.data(0, Qt.ItemDataRole.UserRole)
         if data and data[0] == 'file':
-            self._rename_file(data[1])   # 双击文件 → 重命名
+            self.file_selected.emit(data[1])   # 双击文件 → 打开（原始行为）
 
     def _save_expanded(self) -> set:
         result = set()
@@ -1652,39 +1652,111 @@ class Sidebar(QTreeWidget):
         menu.exec(self.mapToGlobal(pos))
 
     def _rename_file(self, filepath: str):
-        """弹出输入框重命名 txt 文件，同步更新 store 和磁盘"""
+        """弹出自定义风格输入框重命名 txt 文件，同步更新 store 和磁盘"""
         old_path = Path(filepath)
-        old_name = old_path.stem   # 不含扩展名
+        old_name = old_path.stem
 
-        new_name, ok = QInputDialog.getText(
-            self, '重命名文件', '新文件名（不含扩展名）：',
-            text=old_name)
-        if not ok or not new_name.strip() or new_name.strip() == old_name:
+        # ── 自定义风格弹窗（替换系统 QInputDialog）──────────────
+        dlg = QDialog(self.window(), Qt.WindowType.FramelessWindowHint)
+        dlg.setModal(True)
+        dlg.setStyleSheet(f"""
+            QDialog {{
+                background: {C['bg_input']};
+                border: 1px solid {C['border']};
+                border-radius: 10px;
+            }}
+        """)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 18, 20, 16)
+        lay.setSpacing(12)
+
+        lbl = QLabel('重命名文件')
+        lbl.setStyleSheet(f"color: {C['fg']}; font-size: 14px; font-weight: bold;")
+        lay.addWidget(lbl)
+
+        edit = QLineEdit(old_name)
+        edit.setStyleSheet(f"""
+            QLineEdit {{
+                background: {C['bg_sel']}; color: {C['fg']};
+                border: 1px solid {C['border']}; border-radius: 6px;
+                padding: 7px 10px; font-size: 14px;
+            }}
+            QLineEdit:focus {{ border-color: {C['accent']}; }}
+        """)
+        edit.selectAll()
+        lay.addWidget(edit)
+
+        err_lbl = QLabel('')
+        err_lbl.setStyleSheet(f"color: #e06c6c; font-size: 12px;")
+        err_lbl.hide()
+        lay.addWidget(err_lbl)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        _btn_ss = f"""
+            QPushButton {{
+                background: {C['bg_sel']}; color: {C['fg_dim']};
+                border: none; border-radius: 6px;
+                padding: 7px 20px; font-size: 13px;
+            }}
+            QPushButton:hover {{ color: {C['fg']}; }}
+        """
+        _ok_ss = f"""
+            QPushButton {{
+                background: {C['accent']}; color: white;
+                border: none; border-radius: 6px;
+                padding: 7px 20px; font-size: 13px; font-weight: bold;
+            }}
+            QPushButton:hover {{ background: #8b7fc0; }}
+        """
+        cancel_btn = QPushButton('取消')
+        cancel_btn.setStyleSheet(_btn_ss)
+        cancel_btn.clicked.connect(dlg.reject)
+        ok_btn = QPushButton('确认')
+        ok_btn.setStyleSheet(_ok_ss)
+        ok_btn.setDefault(True)
+
+        def _do_rename():
+            new_name = edit.text().strip()
+            forbidden = set('/\\:*?"<>|')
+            if not new_name:
+                err_lbl.setText('文件名不能为空'); err_lbl.show(); return
+            if any(c in forbidden for c in new_name):
+                err_lbl.setText('包含非法字符：/ \\ : * ? " < > |'); err_lbl.show(); return
+            if new_name == old_name:
+                dlg.reject(); return
+            new_path = old_path.parent / (new_name + '.txt')
+            if new_path.exists():
+                err_lbl.setText(f'"{new_name}.txt" 已存在'); err_lbl.show(); return
+            dlg.accept()
+
+        ok_btn.clicked.connect(_do_rename)
+        edit.returnPressed.connect(_do_rename)
+
+        btn_row.addStretch()
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(ok_btn)
+        lay.addLayout(btn_row)
+
+        dlg.adjustSize()
+        # 居中于主窗口
+        win = self.window()
+        geo = win.geometry()
+        dlg.move(geo.center() - dlg.rect().center())
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        new_name = new_name.strip()
-
-        # 非法字符检查
-        forbidden = set('/\\:*?"<>|')
-        if any(c in forbidden for c in new_name):
-            QMessageBox.warning(self, '重命名失败', '文件名含非法字符：/ \\ : * ? " < > |')
-            return
-
+        new_name = edit.text().strip()
+        # ── 执行重命名 ────────────────────────────────────────────
         new_path = old_path.parent / (new_name + '.txt')
-        if new_path.exists():
-            QMessageBox.warning(self, '重命名失败', f'文件已存在：{new_name}.txt')
-            return
-
         try:
             old_path.rename(new_path)
         except Exception as e:
             QMessageBox.warning(self, '重命名失败', str(e))
             return
 
-        # 同步更新 store（标注 / 阅读位置 / 文件列表）
         self.store.rename_txt(str(old_path), str(new_path))
 
-        # 通知主窗口同步 _fp
-        win = self.window()
         if win._fp == str(old_path):
             win._fp = str(new_path)
             win._txt_editor._fp = str(new_path)
