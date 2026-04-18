@@ -166,6 +166,22 @@ class FileStore:
             lst.remove(path)
             self.save()
 
+    def rename_txt(self, old_path: str, new_path: str):
+        """重命名文件并同步更新 store 中所有以路径为 key 的数据"""
+        # txt_files 列表
+        lst = self.data.get('txt_files', [])
+        if old_path in lst:
+            lst[lst.index(old_path)] = new_path
+        # 阅读位置
+        rp = self.data.get('read_positions', {})
+        if old_path in rp:
+            rp[new_path] = rp.pop(old_path)
+        # 标注
+        an = self.data.get('annotations', {})
+        if old_path in an:
+            an[new_path] = an.pop(old_path)
+        self.save()
+
     # ── 配置 ──────────────────────────────────────────────────
     def get_config(self, key, default=None):
         return self.data.get('config', {}).get(key, default)
@@ -1520,8 +1536,7 @@ class Sidebar(QTreeWidget):
     def _on_double_click(self, item: QTreeWidgetItem, col: int):
         data = item.data(0, Qt.ItemDataRole.UserRole)
         if data and data[0] == 'file':
-            self.file_selected.emit(data[1])
-        # tag_pin 单击也可以跳转（通过 itemClicked → 此处无需额外处理）
+            self._rename_file(data[1])   # 双击文件 → 重命名
 
     def _save_expanded(self) -> set:
         result = set()
@@ -1622,15 +1637,60 @@ class Sidebar(QTreeWidget):
         menu.setStyleSheet(self._MENU_SS)
         if data and data[0] == 'file':
             fp = data[1]
+            act_rename = menu.addAction('重命名…')
+            act_rename.triggered.connect(lambda checked=False, f=fp: self._rename_file(f))
+            menu.addSeparator()
             act_reveal = menu.addAction('在 Finder 中显示')
             act_reveal.triggered.connect(
                 lambda checked=False, f=fp: subprocess.run(['open', '-R', f]))
             if fp in self.store.get_txt_files():
+                menu.addSeparator()
                 act_rm = menu.addAction('移除')
                 act_rm.triggered.connect(
                     lambda checked=False, f=fp: (self.store.remove_txt(f),
                              self.window()._refresh_sidebar()))
         menu.exec(self.mapToGlobal(pos))
+
+    def _rename_file(self, filepath: str):
+        """弹出输入框重命名 txt 文件，同步更新 store 和磁盘"""
+        old_path = Path(filepath)
+        old_name = old_path.stem   # 不含扩展名
+
+        new_name, ok = QInputDialog.getText(
+            self, '重命名文件', '新文件名（不含扩展名）：',
+            text=old_name)
+        if not ok or not new_name.strip() or new_name.strip() == old_name:
+            return
+        new_name = new_name.strip()
+
+        # 非法字符检查
+        forbidden = set('/\\:*?"<>|')
+        if any(c in forbidden for c in new_name):
+            QMessageBox.warning(self, '重命名失败', '文件名含非法字符：/ \\ : * ? " < > |')
+            return
+
+        new_path = old_path.parent / (new_name + '.txt')
+        if new_path.exists():
+            QMessageBox.warning(self, '重命名失败', f'文件已存在：{new_name}.txt')
+            return
+
+        try:
+            old_path.rename(new_path)
+        except Exception as e:
+            QMessageBox.warning(self, '重命名失败', str(e))
+            return
+
+        # 同步更新 store（标注 / 阅读位置 / 文件列表）
+        self.store.rename_txt(str(old_path), str(new_path))
+
+        # 通知主窗口同步 _fp
+        win = self.window()
+        if win._fp == str(old_path):
+            win._fp = str(new_path)
+            win._txt_editor._fp = str(new_path)
+            win.statusBar().showMessage(new_name + '.txt', 0)
+
+        win._refresh_sidebar()
 
     def _collect_all_tags(self) -> list[str]:
         result = []
