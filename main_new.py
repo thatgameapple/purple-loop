@@ -2189,66 +2189,8 @@ class _ComboHoverDelegate(QStyledItemDelegate):
         return sh.__class__(sh.width(), max(sh.height(), 26))
 
 
-# ── 全局搜索：后台 Worker ────────────────────────────────────────────────
-
-class SearchWorker(QObject):
-    """在子线程里执行搜索，边搜边发信号，支持随时取消"""
-    result_ready = pyqtSignal(str, str, list)   # fp, full_text, [(pos, mlen), ...]
-    finished     = pyqtSignal()
-
-    def __init__(self, files, needle, case_sensitive, tag_filter, annot_filter, store):
-        super().__init__()
-        self._files          = files
-        self._needle         = needle
-        self._case_sensitive = case_sensitive
-        self._tag_filter     = tag_filter
-        self._annot_filter   = annot_filter
-        self._store          = store
-        self._cancelled      = False
-
-    def cancel(self):
-        self._cancelled = True
-
-    def run(self):
-        needle = self._needle if self._case_sensitive else self._needle.lower()
-        for fp in self._files:
-            if self._cancelled:
-                break
-            # 标签过滤
-            if self._tag_filter:
-                scanned = TagScanner.scan(fp)
-                if not any(t == self._tag_filter or
-                           t.startswith(self._tag_filter + '/') for t in scanned):
-                    continue
-            # 标注过滤
-            if self._annot_filter and not self._store.get_annotations(fp):
-                continue
-            try:
-                full = Path(fp).read_text('utf-8')
-            except Exception:
-                continue
-            haystack = full if self._case_sensitive else full.lower()
-
-            # 预计算所有 #tag 的字符范围，命中落在标签内的一律跳过
-            # 用 Python 原生 re 而非 TAG_RE（Qt 对象不可在子线程使用）
-            _tag_re = re.compile(r'#[\w\u4e00-\u9fff]+(?:/[\w\u4e00-\u9fff]+)*')
-            tag_spans = [(m.start(), m.end()) for m in _tag_re.finditer(full)]
-
-            hits, start = [], 0
-            while True:
-                idx = haystack.find(needle, start)
-                if idx < 0:
-                    break
-                end = idx + len(self._needle)
-                # 若命中区间与任何 tag span 有交叉，跳过
-                in_tag = any(ts <= idx < te or ts < end <= te
-                             for ts, te in tag_spans)
-                if not in_tag:
-                    hits.append((idx, len(self._needle)))
-                start = idx + 1
-            if hits and not self._cancelled:
-                self.result_ready.emit(fp, full, hits)
-        self.finished.emit()
+# ── 全局搜索：逐文件定时器驱动（主线程，无跨线程崩溃）────────────────────
+_TAG_RE_SEARCH = re.compile(r'#[\w\u4e00-\u9fff]+(?:/[\w\u4e00-\u9fff]+)*')
 
 
 # ── 全局搜索窗口 ──────────────────────────────────────────────────────────
@@ -2304,8 +2246,7 @@ class GlobalSearchDialog(QDialog):
         self._flat_hits: list[tuple] = []   # [(fp, full_text, pos, mlen), ...] 全局扁平列表
         self._global_idx = 0
         self._sel_fp = ''
-        self._search_thread: QThread | None = None
-        self._search_worker: SearchWorker | None = None
+        self._search_cancelled = True
         self.resize(1000, 660)
         self.setMinimumSize(780, 500)
         self.setStyleSheet(self._SS)
@@ -2510,14 +2451,10 @@ class GlobalSearchDialog(QDialog):
         self._db.start(260)
 
     def _stop_search(self):
-        """取消并清理上一次搜索线程"""
-        if self._search_worker:
-            self._search_worker.cancel()
-        if self._search_thread:
-            self._search_thread.quit()
-            self._search_thread.wait(200)   # 最多等 200ms，不阻塞 UI
-        self._search_thread = None
-        self._search_worker = None
+        """取消当前正在进行的逐步搜索"""
+        self._search_cancelled = True
+        if hasattr(self, '_search_timer'):
+            self._search_timer.stop()
 
     def _run_search(self):
         kw = self._input.text().strip()
@@ -2536,50 +2473,84 @@ class GlobalSearchDialog(QDialog):
         # 取消上一次搜索
         self._stop_search()
 
-        # 重置结果
-        self._results   = []
-        self._flat_hits = []
-        self._global_idx = 0
-        self._kw_current = kw
+        # 重置状态
+        self._results        = []
+        self._flat_hits      = []
+        self._global_idx     = 0
+        self._kw_current     = kw
+        self._search_cancelled = False
+        self._search_files   = self.store.get_txt_files()
+        self._search_idx     = 0
+        self._search_cs      = self._case_btn.isChecked()
+        self._search_tag     = self._tag_combo.currentData()
+        self._search_annot   = self._annot_btn.isChecked()
+        self._search_needle  = kw if self._search_cs else kw.lower()
+
         self._clear_list()
         self._result_lbl.setText('搜索中…')
 
-        # 启动后台搜索线程
-        worker = SearchWorker(
-            files          = self.store.get_txt_files(),
-            needle         = kw,
-            case_sensitive = self._case_btn.isChecked(),
-            tag_filter     = self._tag_combo.currentData(),
-            annot_filter   = self._annot_btn.isChecked(),
-            store          = self.store,
-        )
-        thread = QThread(self)
-        worker.moveToThread(thread)
+        # 用定时器逐文件处理，每处理一个文件让出事件循环（UI 不卡，无跨线程）
+        if not hasattr(self, '_search_timer'):
+            self._search_timer = QTimer(self)
+            self._search_timer.setSingleShot(True)
+            self._search_timer.timeout.connect(self._search_step)
+        self._search_timer.start(0)
 
-        worker.result_ready.connect(self._on_result_ready,
-                                    Qt.ConnectionType.QueuedConnection)
-        worker.finished.connect(self._on_search_finished,
-                                Qt.ConnectionType.QueuedConnection)
-        thread.started.connect(worker.run)
+    def _search_step(self):
+        """每次处理一个文件，处理完立即让出，下一帧继续"""
+        if self._search_cancelled:
+            return
+        if self._search_idx >= len(self._search_files):
+            self._on_search_finished()
+            return
 
-        self._search_worker = worker
-        self._search_thread = thread
-        thread.start()
+        fp = self._search_files[self._search_idx]
+        self._search_idx += 1
 
-    def _on_result_ready(self, fp: str, full: str, hits: list):
-        """子线程每找到一个文件就增量渲染，用户立刻看到结果"""
-        self._results.append((fp, full, hits))
-        for pos, mlen in hits:
-            self._flat_hits.append((fp, full, pos, mlen))
-        # 增量追加这一个文件的结果卡片
-        self._append_file_result(fp, full, hits, self._kw_current)
-        total = sum(len(h) for _, _, h in self._results)
-        self._result_lbl.setText(f'{total} 条 · {len(self._results)} 文件')
+        # 标签过滤
+        if self._search_tag:
+            scanned = TagScanner.scan(fp)
+            if not any(t == self._search_tag or
+                       t.startswith(self._search_tag + '/') for t in scanned):
+                self._search_timer.start(0)
+                return
+        # 标注过滤
+        if self._search_annot and not self.store.get_annotations(fp):
+            self._search_timer.start(0)
+            return
+
+        try:
+            full = Path(fp).read_text('utf-8')
+        except Exception:
+            self._search_timer.start(0)
+            return
+
+        haystack   = full if self._search_cs else full.lower()
+        tag_spans  = [(m.start(), m.end()) for m in _TAG_RE_SEARCH.finditer(full)]
+        needle_len = len(self._kw_current)
+        hits, start = [], 0
+        while True:
+            idx = haystack.find(self._search_needle, start)
+            if idx < 0:
+                break
+            end = idx + needle_len
+            if not any(ts <= idx < te or ts < end <= te for ts, te in tag_spans):
+                hits.append((idx, needle_len))
+            start = idx + 1
+
+        if hits:
+            self._results.append((fp, full, hits))
+            for pos, mlen in hits:
+                self._flat_hits.append((fp, full, pos, mlen))
+            self._append_file_result(fp, full, hits, self._kw_current)
+            total = sum(len(h) for _, _, h in self._results)
+            self._result_lbl.setText(f'{total} 条 · {len(self._results)} 文件')
+
+        self._search_timer.start(0)   # 下一帧继续处理下一个文件
 
     def _on_search_finished(self):
-        """搜索完成"""
-        total = sum(len(h) for _, _, h in self._results)
         if self._results:
+            total = sum(len(h) for _, _, h in self._results)
             self._result_lbl.setText(f'{total} 条 · {len(self._results)} 文件')
         else:
             self._result_lbl.setText('无结果')
@@ -2592,8 +2563,6 @@ class GlobalSearchDialog(QDialog):
             self._preview_file_lbl.setText('选择左侧结果查看全文')
             self._hit_lbl.setText('')
             self._file_lbl.setText('')
-        self._search_thread = None
-        self._search_worker = None
 
     def _append_file_result(self, fp: str, full: str, hits: list, kw: str):
         """增量追加一个文件的搜索结果到左侧列表（子线程 result_ready 信号触发）"""
@@ -2802,7 +2771,7 @@ class GlobalSearchDialog(QDialog):
             super().keyPressEvent(event)
 
     def closeEvent(self, event):
-        self._stop_search()   # 关闭窗口时确保后台线程停止
+        self._stop_search()   # 关闭窗口时停止定时器
         super().closeEvent(event)
 
 
