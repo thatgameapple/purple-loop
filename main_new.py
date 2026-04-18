@@ -1659,7 +1659,7 @@ class Sidebar(QTreeWidget):
 
             act = menu.addAction(f'重命名「{tag_name}」')
             act.setIcon(_mk_menu_icon('pencil', self._ICO_CLR))
-            act.triggered.connect(lambda: self._rename_tag(tag_path))
+            act.triggered.connect(lambda checked=False, t=tag_path: QTimer.singleShot(0, lambda: self._rename_tag(t)))
 
             # 合并到
             all_tags = self._collect_all_tags()
@@ -1670,13 +1670,13 @@ class Sidebar(QTreeWidget):
                     if t != tag_path:
                         a = merge_menu.addAction(t)
                         a.triggered.connect(
-                            lambda _, s=tag_path, d=t: self._merge_tag(s, d))
+                            lambda _, s=tag_path, d=t: QTimer.singleShot(0, lambda: self._merge_tag(s, d)))
 
             menu.addSeparator()
             # 红色删除（QWidgetAction，内含对齐好的垃圾桶图标）
             del_act = _RedMenuAction(
                 '删除标签',
-                lambda t=tag_path: self.tag_delete.emit(t),
+                lambda t=tag_path: QTimer.singleShot(0, lambda: self.tag_delete.emit(t)),
                 menu)
             menu.addAction(del_act)
 
