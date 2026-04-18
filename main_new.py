@@ -4161,7 +4161,7 @@ class MainWindow(QMainWindow):
     def _do_annotate(self, atype: str):
         self._annot_bar.hide()   # 无论结果如何立即隐藏
         annot = self._txt_editor.annotate(atype)
-        if annot:
+        if annot and self._fp:
             self._annot_panel.refresh(self._fp)
 
     def _request_label(self):
@@ -4206,7 +4206,7 @@ class MainWindow(QMainWindow):
         c.setPosition(saved_position, QTextCursor.MoveMode.KeepAnchor)
         self._txt_editor.setTextCursor(c)
         annot = self._txt_editor.annotate(color_type, label_text)
-        if annot:
+        if annot and self._fp:
             self._annot_panel.refresh(self._fp)
 
     def _do_remove_annot(self):
@@ -4215,7 +4215,8 @@ class MainWindow(QMainWindow):
             self._delete_annot_by_id(self._pending_annot_id)
         else:
             self._txt_editor.remove_at_cursor()
-        self._annot_panel.refresh(self._fp)   # 统一在最后刷新
+        if self._fp:
+            self._annot_panel.refresh(self._fp)   # 统一在最后刷新
         self._annot_bar.hide()
         self._pending_annot_id = None
 

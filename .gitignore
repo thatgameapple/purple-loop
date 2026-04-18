@@ -8,3 +8,18 @@ dist/
 *.exe
 *.app
 fonts/*.ttf
+
+# 大型二进制文件（不入 git，通过 GitHub Release 分发）
+*.dmg
+rw.*.dmg
+*.zip
+*.pdf
+*.png
+*.command
+逐字稿.spec
+测试文稿.txt
+main_backup_*.py
+download_win.sh
+build_windows.bat
+make_manual.py
+logo*.png
