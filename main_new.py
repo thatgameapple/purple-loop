@@ -3596,6 +3596,36 @@ class MainWindow(QMainWindow):
             f"color: {C['fg_dim']}; font-size: 13px; font-weight: bold;")
         _top_lay.addWidget(_lbl)
         _top_lay.addStretch()
+
+        # 播放/暂停按钮：控制编辑器只读状态
+        self._edit_toggle = QPushButton('▶')
+        self._edit_toggle.setCheckable(True)
+        self._edit_toggle.setChecked(False)   # 默认只读（暂停 = 锁定）
+        self._edit_toggle.setFixedSize(30, 30)
+        self._edit_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._edit_toggle.setToolTip('点击开始编辑')
+        self._edit_toggle.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {C['fg_dim']};
+                border: 1px solid {C['border']};
+                border-radius: 15px;
+                font-size: 11px;
+                padding: 0;
+            }}
+            QPushButton:hover {{
+                background: {C['bg_input']};
+                color: {C['fg']};
+            }}
+            QPushButton:checked {{
+                background: {C['bg_input']};
+                color: {C['accent']};
+                border-color: {C['accent']};
+            }}
+        """)
+        self._edit_toggle.clicked.connect(self._toggle_edit_mode)
+        _top_lay.addWidget(self._edit_toggle)
+
         sw_lay.addWidget(_top)
 
         self._sidebar = Sidebar(self.store)
@@ -3627,6 +3657,7 @@ class MainWindow(QMainWindow):
 
         self._stack = QStackedWidget()
         self._txt_editor = TxtEditor(self.store)
+        self._txt_editor.setReadOnly(True)   # 默认只读，防止误操作
         self._txt_editor.mouse_released.connect(self._on_mouse_released)
         self._txt_editor._save_timer.timeout.connect(self._refresh_sidebar)
         import random
@@ -3993,11 +4024,26 @@ class MainWindow(QMainWindow):
             self._search_bar.clear_search()   # 同时清空搜索框文字
         # 重置标注面板过滤器，避免跨文件保留上个文件的过滤状态
         self._annot_panel._set_filter(None)
+        # 切文件时恢复只读锁定，防止跨文件误操作
+        self._txt_editor.setReadOnly(True)
+        self._edit_toggle.setChecked(False)
+        self._edit_toggle.setText('▶')
+        self._edit_toggle.setToolTip('点击开始编辑')
+
         self._txt_editor.load_file(path)
         self._annot_panel.refresh(path)
         self._stack.setCurrentWidget(self._txt_editor)
         self._sidebar.set_active(path)
         self.statusBar().showMessage(Path(path).name, 0)
+
+    def _toggle_edit_mode(self, checked: bool):
+        self._txt_editor.setReadOnly(not checked)
+        if checked:
+            self._edit_toggle.setText('⏸')
+            self._edit_toggle.setToolTip('点击锁定（防止误编辑）')
+        else:
+            self._edit_toggle.setText('▶')
+            self._edit_toggle.setToolTip('点击开始编辑')
 
     def _update_progress(self, value: int = -1):
         sb = self._txt_editor.verticalScrollBar()
