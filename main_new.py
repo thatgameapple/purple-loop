@@ -990,6 +990,8 @@ class TxtEditor(QTextEdit):
             self.setUpdatesEnabled(True)
             return
         text = Path(path).read_text('utf-8')
+        from converter import apply_reading_format
+        text = apply_reading_format(text)
 
         # ── 屏蔽绘制，避免用户看到文档头部闪烁 ──────────────────────
         self.setUpdatesEnabled(False)

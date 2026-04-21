@@ -75,6 +75,22 @@ def srt_to_txt(srt_path: str) -> str:
     return '\n\n'.join(result)
 
 
+def apply_reading_format(text: str) -> str:
+    """
+    对任意文本应用阅读排版：去除所有标点替换为空格，保留段落空行。
+    用于 TXT 导入后的显示层处理，不修改磁盘文件。
+    """
+    paras = re.split(r'\n{2,}', text)
+    result = []
+    for para in paras:
+        para = para.replace('\n', ' ')
+        para = _READING_PUNCT_RE.sub(' ', para)
+        para = re.sub(r'[ \t]{2,}', ' ', para).strip()
+        if para:
+            result.append(para)
+    return '\n\n'.join(result)
+
+
 SUPPORTED_EXTS = {'.srt'}
 
 def convert_to_txt(src_path: str) -> str:
