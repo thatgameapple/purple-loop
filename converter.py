@@ -75,9 +75,28 @@ def srt_to_txt(srt_path: str) -> str:
     return '\n\n'.join(result)
 
 
+def _split_long_para(text: str, max_len: int = 80) -> list[str]:
+    """将超长段落按 max_len 字符切块，优先在空格处断开。"""
+    if len(text) <= max_len:
+        return [text]
+    chunks = []
+    while len(text) > max_len:
+        cut = max_len
+        # 往前找最近的空格作为断点
+        space = text.rfind(' ', 0, max_len)
+        if space > max_len // 2:
+            cut = space
+        chunks.append(text[:cut].strip())
+        text = text[cut:].strip()
+    if text:
+        chunks.append(text)
+    return chunks
+
+
 def apply_reading_format(text: str) -> str:
     """
     对任意文本应用阅读排版：去除所有标点替换为空格，每行独立成段。
+    超过 80 字的段落自动切块，避免出现文字墙。
     用于 TXT 导入后的显示层处理，不修改磁盘文件。
     """
     result = []
@@ -85,8 +104,8 @@ def apply_reading_format(text: str) -> str:
         line = _READING_PUNCT_RE.sub(' ', line)
         line = re.sub(r'[ \t]{2,}', ' ', line).strip()
         if line:
-            result.append(line)
-    return '\n\n'.join(result)
+            result.extend(_split_long_para(line))
+    return '\n'.join(result)
 
 
 SUPPORTED_EXTS = {'.srt'}
