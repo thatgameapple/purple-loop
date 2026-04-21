@@ -4453,7 +4453,7 @@ class MainWindow(QMainWindow):
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
             exts = {Path(u.toLocalFile()).suffix.lower() for u in urls}
-            if exts & {'.txt', '.pdf', '.docx', '.srt'}:
+            if exts & {'.txt', '.srt'}:
                 event.acceptProposedAction()
                 return
         event.ignore()

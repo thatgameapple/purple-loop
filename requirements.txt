@@ -1,4 +1,3 @@
-PyMuPDF
-python-docx
+PyQt6
 Pillow
 pyinstaller
