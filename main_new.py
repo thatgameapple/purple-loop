@@ -3,7 +3,8 @@
 
 import sys, os, json, re, uuid, subprocess
 import faulthandler
-faulthandler.enable()   # segfault 时输出 Python 调用栈到 stderr
+if sys.stderr is not None:
+    faulthandler.enable()   # segfault 时输出 Python 调用栈到 stderr（Windows 无控制台时 stderr=None）
 from datetime import datetime
 from pathlib import Path
 
