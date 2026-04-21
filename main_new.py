@@ -1710,8 +1710,7 @@ class Sidebar(QTreeWidget):
                 menu.addSeparator()
                 act_rm = menu.addAction('移除')
                 act_rm.triggered.connect(
-                    lambda checked=False, f=fp: (self.store.remove_txt(f),
-                             self.window()._refresh_sidebar()))
+                    lambda checked=False, f=fp: self.window()._remove_file(f))
         menu.exec(self.mapToGlobal(pos))
 
     def _rename_file(self, filepath: str):
@@ -4037,6 +4036,14 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentWidget(self._txt_editor)
         self._sidebar.set_active(path)
         self.statusBar().showMessage(Path(path).name, 0)
+
+    def _remove_file(self, path: str):
+        self.store.remove_txt(path)
+        if self._txt_editor._fp == path:
+            self._txt_editor._fp = None
+            self._txt_editor.setPlainText('')
+            self._stack.setCurrentWidget(self._empty_lbl)
+        self._refresh_sidebar()
 
     def _toggle_edit_mode(self, checked: bool):
         self._txt_editor.setReadOnly(not checked)
