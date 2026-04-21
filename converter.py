@@ -77,17 +77,15 @@ def srt_to_txt(srt_path: str) -> str:
 
 def apply_reading_format(text: str) -> str:
     """
-    对任意文本应用阅读排版：去除所有标点替换为空格，保留段落空行。
+    对任意文本应用阅读排版：去除所有标点替换为空格，每行独立成段。
     用于 TXT 导入后的显示层处理，不修改磁盘文件。
     """
-    paras = re.split(r'\n{2,}', text)
     result = []
-    for para in paras:
-        para = para.replace('\n', ' ')
-        para = _READING_PUNCT_RE.sub(' ', para)
-        para = re.sub(r'[ \t]{2,}', ' ', para).strip()
-        if para:
-            result.append(para)
+    for line in text.splitlines():
+        line = _READING_PUNCT_RE.sub(' ', line)
+        line = re.sub(r'[ \t]{2,}', ' ', line).strip()
+        if line:
+            result.append(line)
     return '\n\n'.join(result)
 
 
