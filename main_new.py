@@ -2789,7 +2789,8 @@ class GlobalSearchDialog(QDialog):
             c = QTextCursor(self._preview.document())
             c.select(QTextCursor.SelectionType.Document)
             blk = QTextBlockFormat()
-            blk.setLineHeight(160, 1)
+            blk.setLineHeight(170, 1)
+            blk.setBottomMargin(14)
             c.setBlockFormat(blk)
 
         fmt_all = QTextCharFormat()
