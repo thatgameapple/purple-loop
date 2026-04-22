@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QStyledItemDelegate, QWidgetAction
 )
 from PyQt6.QtGui import (
-    QColor, QFont, QTextCharFormat, QTextCursor, QTextDocument,
+    QColor, QFont, QFontMetrics, QTextCharFormat, QTextCursor, QTextDocument,
     QPalette, QPixmap, QImage, QAction, QKeySequence, QSyntaxHighlighter,
     QPainter, QFontDatabase, QCursor, QPen, QPolygonF, QIcon
 )
@@ -1478,6 +1478,86 @@ class _SidebarTagDelegate(QStyledItemDelegate):
                         tree._show_tag_menu(item, data, global_pos)
                     return True
         return super().editorEvent(event, model, option, index)
+
+
+# ── 侧栏顶部 MP3 滚动标题 ─────────────────────────────────────────────────
+
+class _MarqueeLabel(QWidget):
+    """MP3 风格滚动标题，显示当前打开的文稿名"""
+    _PAUSE_MS = 1800   # 静止等待（毫秒）
+    _STEP_PX  = 1      # 每帧滚动像素
+    _FPS_MS   = 35     # 帧间隔
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._text    = 'PURPLE LOOP'
+        self._playing = False
+        self._offset  = 0
+
+        self._scr_timer = QTimer(self)
+        self._scr_timer.setInterval(self._FPS_MS)
+        self._scr_timer.timeout.connect(self._tick)
+
+        self._pause_timer = QTimer(self)
+        self._pause_timer.setSingleShot(True)
+        self._pause_timer.timeout.connect(self._begin_scroll)
+
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+    def _mk_font(self):
+        return QFont('PingFang SC', 11)
+
+    def set_now_playing(self, stem: str):
+        self._scr_timer.stop()
+        self._pause_timer.stop()
+        self._offset  = 0
+        self._playing = bool(stem)
+        self._text    = stem if stem else 'PURPLE LOOP'
+        self.update()
+        self._schedule()
+
+    def _schedule(self):
+        fm = QFontMetrics(self._mk_font())
+        if fm.horizontalAdvance(self._text) > self.width() - 16:
+            self._pause_timer.start(self._PAUSE_MS)
+
+    def _begin_scroll(self):
+        self._scr_timer.start()
+
+    def _tick(self):
+        self._offset += self._STEP_PX
+        fm = QFontMetrics(self._mk_font())
+        if self._offset >= fm.horizontalAdvance(self._text) + 24:
+            self._offset = 0
+            self._scr_timer.stop()
+            self._pause_timer.start(self._PAUSE_MS)
+        self.update()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not self._scr_timer.isActive() and not self._pause_timer.isActive():
+            self._schedule()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setClipRect(self.rect())
+        f = self._mk_font()
+        painter.setFont(f)
+        fm = QFontMetrics(f)
+
+        color = QColor(C['fg_tag']) if self._playing else QColor(C['fg_dim'])
+        painter.setPen(color)
+
+        text_w = fm.horizontalAdvance(self._text)
+        y = (self.height() + fm.ascent() - fm.descent()) // 2
+
+        if text_w <= self.width() - 16:
+            painter.drawText(8, y, self._text)
+        else:
+            x = 8 - self._offset
+            painter.drawText(x, y, self._text)
+            if x + text_w < self.width() - 8:
+                painter.drawText(x + text_w + 24, y, self._text)
 
 
 # ── 侧边栏 ────────────────────────────────────────────────────────────────
@@ -3637,7 +3717,8 @@ class MainWindow(QMainWindow):
             f"background: {C['bg_sidebar']}; border-bottom: 1px solid {C['border']};")
         _top_lay = QHBoxLayout(_top)
         _top_lay.setContentsMargins(12, 0, 8, 0)
-        _top_lay.addStretch()
+        self._marquee = _MarqueeLabel()
+        _top_lay.addWidget(self._marquee, 1)
 
         # 播放/暂停按钮：控制编辑器只读状态
         self._edit_toggle = QPushButton('▶')
@@ -4076,6 +4157,7 @@ class MainWindow(QMainWindow):
         self._annot_panel.refresh(path)
         self._stack.setCurrentWidget(self._txt_editor)
         self._sidebar.set_active(path)
+        self._marquee.set_now_playing(Path(path).stem)
         self.statusBar().showMessage(Path(path).name, 0)
 
     def _remove_file(self, path: str):
