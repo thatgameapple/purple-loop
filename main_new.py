@@ -1484,59 +1484,41 @@ class _SidebarTagDelegate(QStyledItemDelegate):
 
 class _MarqueeLabel(QWidget):
     """MP3 风格滚动标题，显示当前打开的文稿名"""
-    _PAUSE_MS = 1800   # 静止等待（毫秒）
-    _STEP_PX  = 1      # 每帧滚动像素
-    _FPS_MS   = 35     # 帧间隔
+    _FPS_MS       = 50   # ~20fps
+    _PX_PER_FRAME = 1    # 20px/s
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._text    = 'PURPLE LOOP'
         self._playing = False
         self._offset  = 0
-
-        self._scr_timer = QTimer(self)
-        self._scr_timer.setInterval(self._FPS_MS)
-        self._scr_timer.timeout.connect(self._tick)
-
-        self._pause_timer = QTimer(self)
-        self._pause_timer.setSingleShot(True)
-        self._pause_timer.timeout.connect(self._begin_scroll)
-
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._timer = QTimer(self)
+        self._timer.setInterval(self._FPS_MS)
+        self._timer.timeout.connect(self._tick)
 
     def _mk_font(self):
         return QFont('PingFang SC', 11)
 
     def set_now_playing(self, stem: str):
-        self._scr_timer.stop()
-        self._pause_timer.stop()
+        self._timer.stop()
         self._offset  = 0
         self._playing = bool(stem)
         self._text    = stem if stem else 'PURPLE LOOP'
         self.update()
-        self._schedule()
-
-    def _schedule(self):
-        fm = QFontMetrics(self._mk_font())
-        if fm.horizontalAdvance(self._text) > self.width() - 16:
-            self._pause_timer.start(self._PAUSE_MS)
-
-    def _begin_scroll(self):
-        self._scr_timer.start()
+        if self._playing:
+            self._timer.start()   # 有文件打开就一直滚
 
     def _tick(self):
-        self._offset += self._STEP_PX
-        fm = QFontMetrics(self._mk_font())
-        if self._offset >= fm.horizontalAdvance(self._text) + 24:
-            self._offset = 0
-            self._scr_timer.stop()
-            self._pause_timer.start(self._PAUSE_MS)
+        fm    = QFontMetrics(self._mk_font())
+        tw    = fm.horizontalAdvance(self._text)
+        # loop = 文字宽 + 间隔（间隔=文字宽，最短 60px）→ 让两份文字交替出现
+        gap   = max(tw, 60)
+        self._offset = (self._offset + self._PX_PER_FRAME) % (tw + gap)
         self.update()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if not self._scr_timer.isActive() and not self._pause_timer.isActive():
-            self._schedule()
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -1548,16 +1530,16 @@ class _MarqueeLabel(QWidget):
         color = QColor(C['fg_tag']) if self._playing else QColor(C['fg_dim'])
         painter.setPen(color)
 
-        text_w = fm.horizontalAdvance(self._text)
-        y = (self.height() + fm.ascent() - fm.descent()) // 2
+        tw = fm.horizontalAdvance(self._text)
+        y  = (self.height() + fm.ascent() - fm.descent()) // 2
 
-        if text_w <= self.width() - 16:
+        if not self._playing:
             painter.drawText(8, y, self._text)
         else:
-            x = 8 - self._offset
+            gap = max(tw, 60)
+            x   = 8 - self._offset
             painter.drawText(x, y, self._text)
-            if x + text_w < self.width() - 8:
-                painter.drawText(x + text_w + 24, y, self._text)
+            painter.drawText(x + tw + gap, y, self._text)
 
 
 # ── 侧边栏 ────────────────────────────────────────────────────────────────

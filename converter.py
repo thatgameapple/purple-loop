@@ -14,7 +14,7 @@ _SRT_BLOCK_RE = re.compile(
 )
 
 _READING_PUNCT_RE = re.compile(
-    r'[^一-鿿㐀-䶿豈-﫿A-Za-z0-9\s]'
+    r'[^一-鿿㐀-䶿豈-﫿A-Za-z0-9\s#/]'
 )
 
 def _srt_ms(t: str) -> int:
