@@ -1395,22 +1395,66 @@ class _SidebarTagDelegate(QStyledItemDelegate):
             painter.restore()
             return
 
-        # ── tag / header 行：交给 super() 正常绘制，再叠加 ··· ─
+        # ── tag 行：自定义绘制（含 count pill）────────────────────
+        if data and data[0] in ('tag', 'tag_pin'):
+            from PyQt6.QtGui import QFontMetrics
+            text      = index.data(Qt.ItemDataRole.DisplayRole) or ''
+            m         = re.search(r'\s+(\d+)$', text)
+            name_text = text[:m.start()].rstrip() if m else text
+            count_str = m.group(1) if m else ''
+
+            # 背景（pinned 有底色；hover 叠一层极淡白）
+            bg_brush = index.data(Qt.ItemDataRole.BackgroundRole)
+            if bg_brush and hasattr(bg_brush, 'color'):
+                painter.fillRect(r, bg_brush.color())
+            if is_hover:
+                painter.fillRect(r, self._HV_BG)
+
+            # 前景色（selected 时用 fg，pinned 是 accent，普通 tag 是 fg_tag）
+            fg_brush = index.data(Qt.ItemDataRole.ForegroundRole)
+            fg = fg_brush.color() if (fg_brush and hasattr(fg_brush, 'color')) else QColor(C['fg_tag'])
+            if is_sel:
+                fg = QColor(C['fg'])
+
+            # 标签名文字（为 pill + ··· 按钮留空间）
+            btn_reserve  = self._BTN_W + 4 if is_hover else 0
+            pill_reserve = 30 if count_str else 0
+            name_rect = r.adjusted(4, 0, -(pill_reserve + btn_reserve), 0)
+            painter.setFont(QFont('PingFang SC', 13))
+            painter.setPen(fg)
+            painter.drawText(name_rect,
+                             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                             name_text)
+
+            # Count pill
+            if count_str:
+                fm     = QFontMetrics(QFont('PingFang SC', 10))
+                tw     = fm.horizontalAdvance(count_str)
+                pill_h = 16
+                pill_w = max(tw + 10, 22)
+                pill_r = r.right() - btn_reserve - 4
+                pill_rect = QRect(pill_r - pill_w,
+                                  r.top() + (r.height() - pill_h) // 2,
+                                  pill_w, pill_h)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(255, 255, 255, 18))
+                painter.drawRoundedRect(QRectF(pill_rect), 8, 8)
+                painter.setFont(QFont('PingFang SC', 10))
+                painter.setPen(QColor(C['fg_dim']))
+                painter.drawText(pill_rect, Qt.AlignmentFlag.AlignCenter, count_str)
+
+            # ··· hover 按钮
+            if is_hover:
+                btn = self._btn_rect(r)
+                painter.setPen(self._FG_IDLE)
+                painter.setFont(QFont('PingFang SC', 12))
+                painter.drawText(btn, Qt.AlignmentFlag.AlignCenter, '···')
+
+            painter.restore()
+            return
+
+        # ── header / other 行：super 默认绘制 ─────────────────────
         super().paint(painter, option, index)
-
-        if not data or data[0] not in ('tag', 'tag_pin'):
-            painter.restore()
-            return
-
-        if not is_hover:
-            painter.restore()
-            return
-
-        btn = self._btn_rect(r)
-        painter.setPen(self._FG_IDLE)
-        f2 = QFont('PingFang SC', 12)
-        painter.setFont(f2)
-        painter.drawText(btn, Qt.AlignmentFlag.AlignCenter, '···')
         painter.restore()
 
     def _btn_rect(self, item_rect: QRect) -> QRect:
@@ -1462,7 +1506,7 @@ class Sidebar(QTreeWidget):
                 font-size: 13px;
             }}
             QTreeWidget::item {{
-                padding: 3px 4px;
+                padding: 7px 4px;
                 border-radius: 4px;
             }}
             QTreeWidget::item:selected {{
@@ -3593,10 +3637,6 @@ class MainWindow(QMainWindow):
             f"background: {C['bg_sidebar']}; border-bottom: 1px solid {C['border']};")
         _top_lay = QHBoxLayout(_top)
         _top_lay.setContentsMargins(12, 0, 8, 0)
-        _lbl = QLabel('purple loop')
-        _lbl.setStyleSheet(
-            f"color: {C['fg_dim']}; font-size: 13px; font-weight: bold;")
-        _top_lay.addWidget(_lbl)
         _top_lay.addStretch()
 
         # 播放/暂停按钮：控制编辑器只读状态
