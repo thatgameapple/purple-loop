@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """purple loop v2 — PyQt6 + inline #tag"""
 
+APP_VERSION = "1.17"
+
 import sys, os, json, re, uuid, subprocess
 import faulthandler
 if sys.stderr is not None:

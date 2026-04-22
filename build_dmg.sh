@@ -14,8 +14,8 @@ ditto "dist/purple loop.app" "/tmp/purple_loop_dmg/purple loop.app"
 ln -s /Applications /tmp/purple_loop_dmg/Applications
 codesign --force --deep --sign - "/tmp/purple_loop_dmg/purple loop.app"
 
-VERSION=$(date +%Y%m%d)
-DMG="purple_loop_${VERSION}.dmg"
+VERSION=$(python3 -c "import re; m=re.search(r'APP_VERSION\s*=\s*\"([^\"]+)\"', open('main_new.py').read()); print(m.group(1))")
+DMG="purple_loop_${VERSION}_macos.dmg"
 hdiutil create -volname "purple loop" -srcfolder /tmp/purple_loop_dmg \
   -ov -format UDZO "$DMG"
 
