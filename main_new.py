@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """purple loop v2 — PyQt6 + inline #tag"""
 
-APP_VERSION = "1.20"
+APP_VERSION = "1.21"
 
 import sys, os, json, re, uuid, subprocess
 import faulthandler
@@ -3253,6 +3253,7 @@ class HelpDialog(QDialog):
             ('Ctrl+S',         '保存当前文件'),
             ('Ctrl+\\\\',        '显示 / 隐藏标注面板'),
             ('Ctrl+Shift+Z',   '禅定模式（隐藏所有界面）'),
+            ('Z / X',          '上一页 / 下一页'),
             ('Cmd / Ctrl + ↑', '跳到文章开头'),
             ('Cmd / Ctrl + ↓', '跳到文章末尾'),
             ('F5',             '刷新侧栏标签'),
@@ -4557,13 +4558,13 @@ class MainWindow(QMainWindow):
         if (event.type() == QEvent.Type.KeyPress
                 and QApplication.activeWindow() is self
                 and self._stack.currentWidget() == self._txt_editor):
-            # ← / Z 上一页，→ / X 下一页（应用级拦截，无需编辑器获焦）
+            # Z 上一页，X 下一页（应用级拦截，无需编辑器获焦）
             if not event.modifiers():
                 sb = self._txt_editor.verticalScrollBar()
-                if event.key() in (Qt.Key.Key_Right, Qt.Key.Key_X):
+                if event.key() == Qt.Key.Key_X:
                     sb.setValue(min(sb.value() + sb.pageStep(), sb.maximum()))
                     return True
-                if event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Z):
+                if event.key() == Qt.Key.Key_Z:
                     sb.setValue(max(sb.value() - sb.pageStep(), sb.minimum()))
                     return True
             # Cmd+C/V：焦点不在输入框时转发给正文编辑器
