@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """purple loop v2 — PyQt6 + inline #tag"""
 
-APP_VERSION = "1.18"
+APP_VERSION = "1.19"
 
 import sys, os, json, re, uuid, subprocess
 import faulthandler
@@ -2362,6 +2362,7 @@ class GlobalSearchDialog(QDialog):
         self.resize(1000, 660)
         self.setMinimumSize(780, 500)
         self.setStyleSheet(self._SS)
+        QApplication.instance().installEventFilter(self)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -2880,11 +2881,26 @@ class GlobalSearchDialog(QDialog):
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
             self.reject()
+        elif event.matches(QKeySequence.StandardKey.Copy):
+            self._preview.copy()
         else:
             super().keyPressEvent(event)
 
+    def eventFilter(self, obj, event):
+        from PyQt6.QtCore import QEvent
+        # 焦点在列表条目等非文本控件时，把 Cmd+C 转发给预览区
+        if (event.type() == QEvent.Type.KeyPress
+                and QApplication.activeWindow() is self
+                and obj is not self._preview
+                and not isinstance(obj, (QLineEdit, QTextEdit))):
+            if event.matches(QKeySequence.StandardKey.Copy):
+                self._preview.copy()
+                return True
+        return super().eventFilter(obj, event)
+
     def closeEvent(self, event):
         self._stop_search()   # 关闭窗口时停止定时器
+        QApplication.instance().removeEventFilter(self)
         super().closeEvent(event)
 
 
@@ -4536,7 +4552,9 @@ class MainWindow(QMainWindow):
         from PyQt6.QtCore import QEvent
         # 拦截所有非文本输入控件上的 Cmd+C/V，直接转发给正文编辑器
         # 解决 _annot_bar（Popup）在 macOS 拦截键盘事件导致快捷键失效的问题
+        # 仅在主窗口为活动窗口时生效，避免干扰对话框（如全局搜索）
         if (event.type() == QEvent.Type.KeyPress
+                and QApplication.activeWindow() is self
                 and obj is not self._txt_editor
                 and not isinstance(obj, (QLineEdit, QTextEdit))
                 and self._stack.currentWidget() == self._txt_editor):
