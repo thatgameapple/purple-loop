@@ -1219,15 +1219,15 @@ class TxtEditor(QTextEdit):
             QTimer.singleShot(30, self.mouse_released.emit)
 
     def keyPressEvent(self, event):
+        if event.matches(QKeySequence.StandardKey.Copy):
+            self.copy(); return
+        if event.matches(QKeySequence.StandardKey.Paste):
+            self.paste(); return
+        if event.matches(QKeySequence.StandardKey.Cut):
+            self.cut(); return
+        if event.matches(QKeySequence.StandardKey.SelectAll):
+            self.selectAll(); return
         if event.modifiers() & MOD:
-            if event.key() == Qt.Key.Key_C:
-                self.copy(); return
-            if event.key() == Qt.Key.Key_V:
-                self.paste(); return
-            if event.key() == Qt.Key.Key_X:
-                self.cut(); return
-            if event.key() == Qt.Key.Key_A:
-                self.selectAll(); return
             key_map = {
                 Qt.Key.Key_1: 'hl_yellow',
                 Qt.Key.Key_2: 'hl_green',
@@ -3664,6 +3664,7 @@ class MainWindow(QMainWindow):
         self._refresh_sidebar()
         self._apply_theme()
         self._setup_fs_watcher()
+        QApplication.instance().installEventFilter(self)
 
     # ── 字体 ──────────────────────────────────────────────────
     def _load_fonts(self):
@@ -4531,6 +4532,22 @@ class MainWindow(QMainWindow):
     def _clear_search_hl(self):
         self._txt_editor.setExtraSelections([])
 
+    def eventFilter(self, obj, event):
+        from PyQt6.QtCore import QEvent
+        # 拦截所有非文本输入控件上的 Cmd+C/V，直接转发给正文编辑器
+        # 解决 _annot_bar（Popup）在 macOS 拦截键盘事件导致快捷键失效的问题
+        if (event.type() == QEvent.Type.KeyPress
+                and obj is not self._txt_editor
+                and not isinstance(obj, (QLineEdit, QTextEdit))
+                and self._stack.currentWidget() == self._txt_editor):
+            if event.matches(QKeySequence.StandardKey.Copy):
+                self._txt_editor.copy()
+                return True
+            if event.matches(QKeySequence.StandardKey.Paste):
+                self._txt_editor.paste()
+                return True
+        return super().eventFilter(obj, event)
+
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
             if self._zen:
@@ -4539,6 +4556,19 @@ class MainWindow(QMainWindow):
                 self._close_search()
             elif self._note_bar.isVisible():
                 self._note_bar.hide()
+
+        # ── Cmd+C/V/A：焦点不在输入框时转发给文本编辑器 ──
+        # 解决点击侧边栏后编辑器失焦，导致复制粘贴快捷键失效的问题
+        # 注意：macOS 上 Qt 默认把 Cmd 映射为 ControlModifier，不能用 MOD 判断，
+        # 改用 event.matches() 让 Qt 自己做跨平台映射
+        elif (self._stack.currentWidget() == self._txt_editor
+              and not isinstance(QApplication.focusWidget(), QLineEdit)):
+            if event.matches(QKeySequence.StandardKey.Copy):
+                self._txt_editor.copy(); return
+            if event.matches(QKeySequence.StandardKey.Paste):
+                self._txt_editor.paste(); return
+            if event.matches(QKeySequence.StandardKey.SelectAll):
+                self._txt_editor.selectAll(); return
 
         # ── 键盘快捷标注：选中文字后按键直接标注，无需鼠标点工具条 ──
         # 仅在编辑器有选区且输入焦点不在搜索/备注栏时生效
