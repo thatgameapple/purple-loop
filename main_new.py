@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """purple loop v2 — PyQt6 + inline #tag"""
 
-APP_VERSION = "1.19"
+APP_VERSION = "1.20"
 
 import sys, os, json, re, uuid, subprocess
 import faulthandler
@@ -259,16 +259,15 @@ class FileStore:
 
     # ── 阅读位置（按字符偏移记忆，不受字号/行距影响）──────────
     def get_read_pos(self, filepath: str) -> dict:
-        """返回 {'char': int, 'poff': int}，兼容旧格式 int"""
+        """返回 {'char': int, 'poff': int, 'ratio': float}，兼容旧格式"""
         raw = self.data.get('read_positions', {}).get(filepath, 0)
         if isinstance(raw, dict):
             return raw
-        return {'char': int(raw), 'poff': 0}
+        return {'char': int(raw), 'poff': 0, 'ratio': None}
 
-    def set_read_pos(self, filepath: str, char: int, poff: int):
-        """poff = 字符顶边在视口内的像素 y（负值表示字符顶部在视口上方）"""
+    def set_read_pos(self, filepath: str, char: int, poff: int, ratio: float = None):
         self.data.setdefault('read_positions', {})[filepath] = {
-            'char': char, 'poff': poff}
+            'char': char, 'poff': poff, 'ratio': ratio}
         self.save()
 
     # ── 标注 ──────────────────────────────────────────────────
@@ -888,6 +887,7 @@ class TxtEditor(QTextEdit):
         self.store       = store
         self._fp: str | None = None
         self._loading    = False
+        self._pending_restore: dict | None = None  # set during load, cleared after restore
         self._highlighter = DocHighlighter(self.document(), store)
 
         # 字体（固定最优阅读字号，不开放调节）
@@ -981,8 +981,10 @@ class TxtEditor(QTextEdit):
         # pixel_offset 捕获子行级精度（字符可能部分在视口上方）
         if self._fp:
             cur  = self.cursorForPosition(QPoint(2, 2))
-            poff = self.cursorRect(cur).top()   # 负值 = 字符顶部在视口上方
-            self.store.set_read_pos(self._fp, char=cur.position(), poff=poff)
+            poff = self.cursorRect(cur).top()
+            sb   = self.verticalScrollBar()
+            ratio = sb.value() / max(sb.maximum(), 1)
+            self.store.set_read_pos(self._fp, char=cur.position(), poff=poff, ratio=ratio)
 
         self._fp      = path
         self._loading = True
@@ -1006,27 +1008,26 @@ class TxtEditor(QTextEdit):
         self._update_count()
 
         pos = self.store.get_read_pos(path)   # {'char': int, 'poff': int}
+        self._pending_restore = pos
 
         def _restore_and_show():
-            saved_char = pos['char']
-            saved_poff = pos['poff']   # 保存时字符顶边的视口 y
+            p = self._pending_restore
+            self._pending_restore = None
 
-            cur     = QTextCursor(self.document())
-            max_pos = max(0, self.document().characterCount() - 1)
-            cur.setPosition(min(saved_char, max_pos))
-            self.setTextCursor(cur)
-            self.ensureCursorVisible()   # 让光标进入视口（触发布局）
+            if p is not None:
+                saved_char = p['char']
+                saved_poff = p['poff']
+                cur = QTextCursor(self.document())
+                max_pos = max(0, self.document().characterCount() - 1)
+                cur.setPosition(min(saved_char, max_pos))
+                self.setTextCursor(cur)
+                self.ensureCursorVisible()
+                cr = self.cursorRect(cur)
+                delta = cr.top() - saved_poff
+                if delta != 0:
+                    sb = self.verticalScrollBar()
+                    sb.setValue(sb.value() + delta)
 
-            # 精确调整：把字符还原到保存时的像素 y 位置
-            # cr.top() = 恢复后字符顶边的视口 y
-            # 目标：使 cr.top() == saved_poff
-            cr = self.cursorRect(cur)
-            delta = cr.top() - saved_poff
-            if delta != 0:
-                sb = self.verticalScrollBar()
-                sb.setValue(sb.value() + delta)
-
-            # 解锁绘制——第一帧直接在正确位置
             self.setUpdatesEnabled(True)
             self.update()
             mw = self.window()
@@ -1035,7 +1036,10 @@ class TxtEditor(QTextEdit):
 
         def _after_layout():
             self._apply_reading_width()
-            QTimer.singleShot(0, _restore_and_show)
+            def _after_style():
+                self.document().documentLayout().documentSize()
+                _restore_and_show()
+            QTimer.singleShot(0, _after_style)
 
         QTimer.singleShot(0, _after_layout)
 
@@ -4550,20 +4554,27 @@ class MainWindow(QMainWindow):
 
     def eventFilter(self, obj, event):
         from PyQt6.QtCore import QEvent
-        # 拦截所有非文本输入控件上的 Cmd+C/V，直接转发给正文编辑器
-        # 解决 _annot_bar（Popup）在 macOS 拦截键盘事件导致快捷键失效的问题
-        # 仅在主窗口为活动窗口时生效，避免干扰对话框（如全局搜索）
         if (event.type() == QEvent.Type.KeyPress
                 and QApplication.activeWindow() is self
-                and obj is not self._txt_editor
-                and not isinstance(obj, (QLineEdit, QTextEdit))
                 and self._stack.currentWidget() == self._txt_editor):
-            if event.matches(QKeySequence.StandardKey.Copy):
-                self._txt_editor.copy()
-                return True
-            if event.matches(QKeySequence.StandardKey.Paste):
-                self._txt_editor.paste()
-                return True
+            # ← / Z 上一页，→ / X 下一页（应用级拦截，无需编辑器获焦）
+            if not event.modifiers():
+                sb = self._txt_editor.verticalScrollBar()
+                if event.key() in (Qt.Key.Key_Right, Qt.Key.Key_X):
+                    sb.setValue(min(sb.value() + sb.pageStep(), sb.maximum()))
+                    return True
+                if event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Z):
+                    sb.setValue(max(sb.value() - sb.pageStep(), sb.minimum()))
+                    return True
+            # Cmd+C/V：焦点不在输入框时转发给正文编辑器
+            if (obj is not self._txt_editor
+                    and not isinstance(obj, (QLineEdit, QTextEdit))):
+                if event.matches(QKeySequence.StandardKey.Copy):
+                    self._txt_editor.copy()
+                    return True
+                if event.matches(QKeySequence.StandardKey.Paste):
+                    self._txt_editor.paste()
+                    return True
         return super().eventFilter(obj, event)
 
     def keyPressEvent(self, event):
@@ -4649,10 +4660,12 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         self._txt_editor.save()
         if self._fp:
-            ed   = self._txt_editor
-            cur  = ed.cursorForPosition(QPoint(2, 2))
-            poff = ed.cursorRect(cur).top()
-            self.store.set_read_pos(self._fp, char=cur.position(), poff=poff)
+            ed    = self._txt_editor
+            cur   = ed.cursorForPosition(QPoint(2, 2))
+            poff  = ed.cursorRect(cur).top()
+            sb    = ed.verticalScrollBar()
+            ratio = sb.value() / max(sb.maximum(), 1)
+            self.store.set_read_pos(self._fp, char=cur.position(), poff=poff, ratio=ratio)
         super().closeEvent(event)
 
 
