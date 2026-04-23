@@ -3244,21 +3244,53 @@ class HelpDialog(QDialog):
         workflow.setWordWrap(True)
         lay.addWidget(workflow)
 
+        # ── 全局搜索补充说明
+        title('全局搜索')
+        subtitle('按 Cmd+K 打开，可在所有文件中同时搜索关键词。支持按 #标签 筛选范围，'
+                 '例如输入 #阳明心学 只搜索该标签下的文件。搜索结果点击后直接跳转到原文位置。')
+        sep()
+
         # ── 快捷键
         title('常用快捷键')
         sep()
-        pairs = [
-            ('Ctrl+K',         '全局搜索'),
-            ('Ctrl+F',         '当前文件内搜索'),
-            ('Ctrl+S',         '保存当前文件'),
-            ('Ctrl+\\\\',        '显示 / 隐藏标注面板'),
-            ('Ctrl+Shift+Z',   '禅定模式（隐藏所有界面）'),
-            ('Z / X',          '上一页 / 下一页'),
-            ('Cmd / Ctrl + ↑', '跳到文章开头'),
-            ('Cmd / Ctrl + ↓', '跳到文章末尾'),
-            ('F5',             '刷新侧栏标签'),
+
+        def section_label(text):
+            lbl = QLabel(text)
+            lbl.setStyleSheet(f'color: {C["fg_dim"]}; font-size: 11px; '
+                              f'padding-top: 10px; padding-bottom: 2px; letter-spacing: 1px;')
+            lay.addWidget(lbl)
+
+        section_label('导航')
+        pairs_nav = [
+            ('Cmd / Ctrl + K',  '全局搜索（跨所有文件）'),
+            ('Cmd / Ctrl + F',  '当前文件内搜索'),
+            ('Z / X',           '上一页 / 下一页（阅读时直接按，无需点击正文）'),
+            ('Cmd / Ctrl + ↑',  '跳到文章开头'),
+            ('Cmd / Ctrl + ↓',  '跳到文章末尾'),
         ]
-        for keys, desc in pairs:
+        for keys, desc in pairs_nav:
+            shortcut_row(keys, desc)
+
+        section_label('标注（选中文字后）')
+        pairs_annot = [
+            ('Cmd / Ctrl + 1',  '黄色高亮'),
+            ('Cmd / Ctrl + 2',  '绿色高亮'),
+            ('Cmd / Ctrl + 3',  '粉色高亮'),
+            ('Cmd / Ctrl + 4',  '紫色高亮'),
+            ('Cmd / Ctrl + B',  '加粗'),
+            ('Cmd / Ctrl + U',  '下划线'),
+        ]
+        for keys, desc in pairs_annot:
+            shortcut_row(keys, desc)
+
+        section_label('界面')
+        pairs_ui = [
+            ('Cmd / Ctrl + S',        '保存当前文件'),
+            ('Cmd / Ctrl + \\',       '显示 / 隐藏标注面板'),
+            ('Cmd / Ctrl + Shift + Z','禅定模式（隐藏所有界面元素）'),
+            ('F5',                    '刷新侧栏标签'),
+        ]
+        for keys, desc in pairs_ui:
             shortcut_row(keys, desc)
 
         lay.addStretch()
